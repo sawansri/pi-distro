@@ -10,6 +10,10 @@
  * The prompt is built once per session and reused, so it stays byte-identical
  * for the server's prompt cache even if agent files change mid-session.
  *
+ * Today's date is sent as a hidden message on the session's first run rather
+ * than in the system prompt, which would change at midnight and break the
+ * cache of every session spanning it (oh-my-pi does the same).
+ *
  * Subagent children (pi-lite-subagent sets PI_SUBAGENT_DEPTH) get a shorter
  * prompt that is the same for every child, so parallel subagents share one
  * cached prefix. pi-lite-subagent appends the agent's own instructions after it.
@@ -71,6 +75,12 @@ function agentRoster(): string {
   return lines.length > 0 ? `\n\n# Subagents\n${lines.join("\n")}` : "";
 }
 
+/** The local date as YYYY-MM-DD. */
+function today(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
 function render(lines: Line[], tools: string[]): string {
   return lines
     .filter((line) => typeof line === "string" || tools.includes(line[0]))
@@ -81,9 +91,12 @@ function render(lines: Line[], tools: string[]): string {
 export default function (pi: ExtensionAPI) {
   const isChild = Boolean(process.env.PI_SUBAGENT_DEPTH);
   let prompt: string | undefined;
+  let datedSession = false;
 
-  pi.on("session_start", () => {
+  pi.on("session_start", (_event, ctx) => {
     prompt = undefined;
+    // A resumed session already has a date message (or predates this extension).
+    datedSession = ctx.sessionManager.getBranch().some((e: { type: string }) => e.type === "message");
   });
 
   pi.on("before_agent_start", (event) => {
@@ -96,5 +109,11 @@ export default function (pi: ExtensionAPI) {
       if (!isChild && tools.includes("subagent")) prompt += agentRoster();
     }
     options.customPrompt = prompt;
+
+    if (datedSession) return;
+    datedSession = true;
+    return {
+      message: { customType: "pi-distro-date", content: `Today's date is ${today()}.`, display: false },
+    };
   });
 }

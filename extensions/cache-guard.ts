@@ -6,7 +6,12 @@
  * the very start. Anything that changes one of them, or rewrites earlier
  * history, makes the server reprocess the whole conversation. This extension
  * shows the cache hit rate in the footer and warns, with the cause, when a
- * request reprocesses more than PI_DISTRO_CACHE_WARN_TOKENS (default 1024).
+ * request reprocesses more than PI_DISTRO_CACHE_WARN_TOKENS (default 1024)
+ * that the previous request had already processed.
+ *
+ * New content in a request (tool results, the user's message) always has to
+ * be processed, so it doesn't count as a miss: a request can reuse at most the
+ * previous request's prompt, and the hit rate is cached / reusable tokens.
  *
  * Causes are found by comparing each request payload with the previous one:
  * the leading system message, the tool list, the reasoning effort, and
@@ -55,6 +60,12 @@ function snapshot(payload: any): Snapshot | undefined {
   };
 }
 
+/** Tokens of the previous prompt this request could have reused but processed again. */
+export function missedTokens(prompt: number, cached: number, previousPrompt: number | undefined): number {
+  if (previousPrompt === undefined) return 0;
+  return Math.max(0, Math.min(prompt, previousPrompt) - cached);
+}
+
 /** Why `next` can't reuse the cache built by `prev`, or undefined if it only appends. */
 function headChange(prev: Snapshot, next: Snapshot): string | undefined {
   if (prev.system !== next.system) return "system prompt changed";
@@ -70,15 +81,17 @@ export default function (pi: ExtensionAPI) {
   let cause: string | undefined;
   let compacted = false;
   let usage: RawUsage | undefined;
+  let previousPrompt: number | undefined;
   let requests = 0;
-  let promptTotal = 0;
+  let reusableTotal = 0;
   let cachedTotal = 0;
 
   const reset = () => {
     prev = pending = undefined;
+    previousPrompt = undefined;
     cause = undefined;
     compacted = false;
-    requests = promptTotal = cachedTotal = 0;
+    requests = reusableTotal = cachedTotal = 0;
   };
 
   pi.on("session_start", (_event, ctx) => {
@@ -116,15 +129,18 @@ export default function (pi: ExtensionAPI) {
     const normalized = (event.message as { usage?: { input?: number; cacheRead?: number } }).usage;
     const cached = usage?.prompt_tokens_details?.cached_tokens ?? usage?.cached_tokens ?? normalized?.cacheRead ?? 0;
     const prompt = usage?.prompt_tokens ?? (normalized?.input ?? 0) + cached;
-    const reprocessed = Math.max(0, prompt - cached);
+    const missed = missedTokens(prompt, cached, previousPrompt);
     const serverReason = usage?.gufo?.cache_miss_reason ?? usage?.cache_miss_reason;
-    const isFirst = prev === undefined;
+    const isFirst = previousPrompt === undefined;
 
     requests += 1;
-    promptTotal += prompt;
-    cachedTotal += cached;
-    report(ctx, { prompt, cached, reprocessed, cause, serverReason, isFirst });
+    if (!isFirst) {
+      reusableTotal += Math.min(prompt, previousPrompt!);
+      cachedTotal += Math.min(prompt, previousPrompt!) - missed;
+    }
+    report(ctx, { prompt, cached, missed, cause, serverReason, isFirst });
 
+    previousPrompt = prompt;
     prev = pending;
     pending = undefined;
     compacted = false;
@@ -132,18 +148,17 @@ export default function (pi: ExtensionAPI) {
 
   function report(
     ctx: ExtensionContext,
-    r: { prompt: number; cached: number; reprocessed: number; cause?: string; serverReason?: string; isFirst: boolean },
+    r: { prompt: number; cached: number; missed: number; cause?: string; serverReason?: string; isFirst: boolean },
   ) {
     if (LOG) {
       fs.appendFileSync(LOG, `${JSON.stringify({ time: new Date().toISOString(), ...r })}\n`);
     }
     if (!ctx.hasUI) return;
-    const rate = promptTotal > 0 ? Math.round((100 * cachedTotal) / promptTotal) : 0;
-    ctx.ui.setStatus("cache", `cache ${rate}%`);
-    if (!r.isFirst && r.reprocessed >= WARN_TOKENS) {
+    if (reusableTotal > 0) ctx.ui.setStatus("cache", `cache ${Math.floor((100 * cachedTotal) / reusableTotal)}%`);
+    if (r.missed >= WARN_TOKENS) {
       const why = [r.cause, r.serverReason && `server: ${r.serverReason}`].filter(Boolean).join("; ");
       ctx.ui.notify(
-        `Prompt cache miss: reprocessed ${r.reprocessed.toLocaleString()} of ${r.prompt.toLocaleString()} tokens${why ? ` (${why})` : ""}.`,
+        `Prompt cache miss: reprocessed ${r.missed.toLocaleString()} tokens the server had already processed${why ? ` (${why})` : ""}.`,
         "warning",
       );
     }
