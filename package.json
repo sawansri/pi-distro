@@ -11,7 +11,8 @@
     "extensions": [
       "./extensions/tool-loadout.ts",
       "./extensions/lean-prompt.ts",
-      "./extensions/cache-guard.ts"
+      "./extensions/cache-guard.ts",
+      "./extensions/plan-mode.ts"
     ],
     "skills": [
       "./skills"
@@ -19,5 +20,8 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=1.5.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts"
   }
 }
