@@ -32,6 +32,14 @@ function lastAssistantText(entries: readonly unknown[]): string {
 }
 
 export default function (pi: ExtensionAPI) {
+  // Resolves when the run started by the handoff request is over. waitForIdle()
+  // can return before a just-sent message has started its run.
+  let onSettled: (() => void) | undefined;
+  pi.on("agent_settled", () => {
+    onSettled?.();
+    onSettled = undefined;
+  });
+
   pi.registerCommand("handoff", {
     description: "Summarize this session and continue in a fresh one",
     handler: async (args, ctx) => {
@@ -39,9 +47,13 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("Wait for the current turn to finish before handing off.", "warning");
         return;
       }
+      const before = ctx.sessionManager.getBranch().length;
+      const settled = new Promise<void>((resolve) => {
+        onSettled = resolve;
+      });
       pi.sendUserMessage(request(args.trim()));
-      await ctx.waitForIdle();
-      const note = lastAssistantText(ctx.sessionManager.getBranch()).trim();
+      await settled;
+      const note = lastAssistantText(ctx.sessionManager.getBranch().slice(before)).trim();
       if (!note) {
         ctx.ui.notify("The model didn't write a handoff note; staying in this session.", "error");
         return;

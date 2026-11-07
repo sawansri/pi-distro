@@ -13,7 +13,10 @@
       "./extensions/subagents.ts",
       "./extensions/lean-prompt.ts",
       "./extensions/cache-guard.ts",
-      "./extensions/plan-mode.ts"
+      "./extensions/plan-mode.ts",
+      "./extensions/remember.ts",
+      "./extensions/handoff.ts",
+      "./extensions/notify.ts"
     ],
     "skills": [
       "./skills"
