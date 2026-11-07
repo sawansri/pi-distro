@@ -11,6 +11,10 @@
  * tools: its diagnostics still reach the model in edit and write results.
  * pi's `defaultTools: ["-name"]` setting can't do this, as it only removes
  * built-in tools.
+ *
+ * Tools registered after the session starts, such as those of MCP servers that
+ * connect in the background, are filtered again before each run. Give MCP
+ * servers `codemode` or `deferred` exposure so they don't add tools mid-session.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -27,10 +31,20 @@ const matches = (name: string, pattern: string) =>
   pattern.endsWith("*") ? name.startsWith(pattern.slice(0, -1)) : name === pattern;
 
 export default function (pi: ExtensionAPI) {
+  let patterns: string[] = [];
+  const allowed = (name: string) => !patterns.some((pattern) => matches(name, pattern));
+
   pi.on("session_start", () => {
-    const patterns = disabledPatterns();
+    patterns = disabledPatterns();
     const active = pi.getActiveTools();
-    const kept = active.filter((name) => !patterns.some((pattern) => matches(name, pattern)));
+    const kept = active.filter(allowed);
     if (kept.length !== active.length) pi.setActiveTools(kept);
+  });
+
+  pi.on("before_agent_start", (event) => {
+    const selected = event.systemPromptOptions.selectedTools;
+    if (selected.some((name) => !allowed(name))) {
+      event.systemPromptOptions.selectedTools = selected.filter(allowed);
+    }
   });
 }

@@ -20,8 +20,9 @@ const request = (focus: string) =>
 
 function lastAssistantText(entries: readonly unknown[]): string {
   for (let i = entries.length - 1; i >= 0; i--) {
-    const e = entries[i] as { type?: string; message?: { role?: string; content?: unknown } };
+    const e = entries[i] as { type?: string; message?: { role?: string; content?: unknown; stopReason?: string } };
     if (e.type !== "message" || e.message?.role !== "assistant") continue;
+    if (e.message.stopReason === "error" || e.message.stopReason === "aborted") return "";
     const content = e.message.content;
     if (typeof content === "string") return content;
     if (Array.isArray(content)) {
@@ -34,9 +35,9 @@ function lastAssistantText(entries: readonly unknown[]): string {
 export default function (pi: ExtensionAPI) {
   // Resolves when the run started by the handoff request is over. waitForIdle()
   // can return before a just-sent message has started its run.
-  let onSettled: (() => void) | undefined;
-  pi.on("agent_settled", () => {
-    onSettled?.();
+  let onSettled: ((aborted: boolean) => void) | undefined;
+  pi.on("agent_settled", (event) => {
+    onSettled?.(event.aborted);
     onSettled = undefined;
   });
 
@@ -48,11 +49,14 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       const before = ctx.sessionManager.getBranch().length;
-      const settled = new Promise<void>((resolve) => {
+      const settled = new Promise<boolean>((resolve) => {
         onSettled = resolve;
       });
       pi.sendUserMessage(request(args.trim()));
-      await settled;
+      if (await settled) {
+        ctx.ui.notify("Handoff stopped; staying in this session.", "warning");
+        return;
+      }
       const note = lastAssistantText(ctx.sessionManager.getBranch().slice(before)).trim();
       if (!note) {
         ctx.ui.notify("The model didn't write a handoff note; staying in this session.", "error");

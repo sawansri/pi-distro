@@ -17,14 +17,16 @@ const { values: args } = parseArgs({
   options: {
     "agent-dir": { type: "string" },
     "package-dir": { type: "string" },
-    gufo: { type: "string", default: "http://127.0.0.1:8080/v1" },
+    gufo: { type: "string" },
     searxng: { type: "string" },
     sessions: { type: "string" },
   },
 });
+const DEFAULT_GUFO = "http://127.0.0.1:8080/v1";
 const agentDir = args["agent-dir"];
 const packageDir = args["package-dir"];
-if (!agentDir || !packageDir) {
+const sessions = args.sessions === undefined ? undefined : Number(args.sessions);
+if (!agentDir || !packageDir || (sessions !== undefined && !(Number.isInteger(sessions) && sessions >= 1))) {
   console.error("usage: node configure.mjs --agent-dir <dir> --package-dir <dir> [--gufo <url>] [--searxng <url>] [--sessions <n>]");
   process.exit(1);
 }
@@ -85,7 +87,7 @@ function configureDistro() {
   if (!current) return;
   const defaults = readJson(config("pi-distro.json")).value;
   const next = { ...defaults, ...current };
-  if (args.sessions) next.subagentConcurrency = Number(args.sessions);
+  if (sessions !== undefined) next.subagentConcurrency = sessions;
   writeJson(file, next);
   console.log(`  wrote ${file}: ${next.subagentConcurrency} parallel subagents`);
 }
@@ -105,12 +107,18 @@ async function configureModels() {
   const current = mergeTarget(file);
   if (!current) return;
   current.providers ??= {};
+  const baseUrl = (args.gufo ?? DEFAULT_GUFO).replace(/\/+$/, "");
   if (current.providers.gufo) {
-    console.log(`  kept the gufo provider in ${file}`);
+    if (args.gufo && current.providers.gufo.baseUrl !== baseUrl) {
+      current.providers.gufo.baseUrl = baseUrl;
+      writeJson(file, current);
+      console.log(`  wrote ${file}: gufo provider moved to ${baseUrl}`);
+    } else {
+      console.log(`  kept the gufo provider in ${file}`);
+    }
     return;
   }
   const template = readJson(config("models.template.json")).value.providers.gufo;
-  const baseUrl = args.gufo.replace(/\/+$/, "");
   const provider = { ...template, baseUrl };
   try {
     const response = await fetch(`${baseUrl}/models`, { signal: AbortSignal.timeout(5000) });
@@ -152,12 +160,15 @@ function configureSettings() {
   settings.packages = (settings.packages ?? []).map((entry) =>
     typeof entry === "string" && /^npm:@ian-pascoe\/pi-lsp(@|$)/.test(entry) ? { source: entry, skills: [] } : entry,
   );
-  // Earlier installs of this distro from another directory.
+  // Earlier installs of this distro from another directory (a clone used with --dev, or the copy).
   settings.packages = settings.packages.filter((entry) => {
     const source = typeof entry === "string" ? entry : entry.source;
     if (typeof source !== "string" || /^(npm|git|https?):/.test(source)) return true;
     const resolved = path.resolve(agentDir, source);
-    return path.basename(resolved) !== "pi-distro" || resolved === path.resolve(packageDir);
+    if (resolved === path.resolve(packageDir)) return true;
+    const isDistro = readJson(path.join(resolved, "package.json")).value?.name === "pi-distro";
+    if (isDistro) console.log(`  removed the earlier install at ${resolved} from pi's packages`);
+    return !isDistro;
   });
 
   if (!settings.lsp) {
@@ -214,6 +225,10 @@ async function configureResearch() {
   }
   console.log(`  wrote search providers to ${path.join(researchDir, "providers")}`);
   seed(config("deep-research.json"), path.join(researchDir, "config.json"));
+  const chain = readJson(path.join(researchDir, "config.json")).value?.providers;
+  if (Array.isArray(chain) && !chain.includes("exa-mcp") && !chain.includes("searxng")) {
+    console.warn(`  ${path.join(researchDir, "config.json")} uses neither searxng nor exa-mcp; add them to "providers" to use them`);
+  }
   if (!args.searxng) return;
 
   const baseUrl = args.searxng.replace(/\/+$/, "");

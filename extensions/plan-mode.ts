@@ -24,34 +24,72 @@ const ENTRY = "pi-distro-plan";
 
 const ON_MESSAGE = [
   "Plan mode is on. Explore and plan, but don't change anything yet:",
-  "- edit and write are blocked; bash runs only read-only commands (ls, cat, grep, rg, find, git status/log/diff/show, ...).",
+  "- edit and write are blocked; bash runs only read-only commands (ls, cat, grep, rg, find, git status/log/diff/show, ...) without redirection.",
   "- Read the relevant code, then ask about anything that is the user's decision.",
   "- When the plan is ready, end your message with it under a `## Plan` heading: numbered steps naming the files to change, and how you'll verify the result.",
 ].join("\n");
 
 const OFF_MESSAGE = "Plan mode is off: you may edit files and run commands again.";
 
-const READ_ONLY = new RegExp(
-  "^(" +
-    [
-      "ls", "cat", "head", "tail", "wc", "file", "stat", "tree", "pwd", "which", "type", "echo", "printf",
-      "grep", "egrep", "rg", "ag", "find", "fd", "sed -n", "awk", "sort", "uniq", "cut", "tr", "diff", "jq",
-      "du", "df", "uname", "env", "date", "basename", "dirname", "realpath", "readlink",
-      "git (status|log|diff|show|blame|branch|grep|ls-files|ls-tree|rev-parse|remote|tag|describe|shortlog)",
-      "npm (ls|view|outdated|explain)", "cargo (tree|metadata)", "go (list|doc|env)",
-    ].join("|") +
-    ")(\\s|$)",
-);
+/** Commands that only read, with the arguments that would make them write or run other commands. */
+const READERS: Record<string, RegExp | null> = {
+  ls: null, cat: null, head: null, tail: null, wc: null, file: null, stat: null, pwd: null, which: null,
+  type: null, echo: null, printf: null, grep: null, egrep: null, cut: null, tr: null, diff: null, jq: null,
+  du: null, df: null, uname: null, date: null, basename: null, dirname: null, realpath: null, readlink: null,
+  rg: /^--pre/,
+  find: /^-(delete|exec|execdir|ok|okdir|fprint|fprint0|fprintf|fls)$/,
+  fd: /^(-x|-X|--exec|--exec-batch)/,
+  sort: /^(-o|--output)/,
+  tree: /^-o/,
+};
 
-/** Whether a bash command only reads: every pipeline stage is allowlisted and nothing is redirected to a file. */
+/** git subcommands that only read; the rest of the arguments must match the pattern. */
+const GIT: Record<string, RegExp> = {
+  status: /^/, log: /^/, show: /^/, blame: /^/, grep: /^/, "ls-files": /^/, "ls-tree": /^/,
+  "rev-parse": /^/, describe: /^/, shortlog: /^/,
+  diff: /^(?!--output)/,
+  branch: /^(-a|-r|-v|-vv|--all|--remotes|--list|--show-current|--verbose)$/,
+  tag: /^(-l|--list)$/,
+  remote: /^(-v|--verbose|get-url|show)$/,
+};
+
+/** Splits a command into words, keeping quoted strings together. */
+const words = (command: string) => command.match(/'[^']*'|"[^"]*"|\S+/g) ?? [];
+
+function isReadOnlyStage(stage: string): boolean {
+  const [name, ...args] = words(stage.replace(/^(\w+=\S*\s+)+/, ""));
+  if (name === undefined) return true;
+  if (name === "git") {
+    const [sub, ...rest] = args;
+    const allowed = sub !== undefined ? GIT[sub] : undefined;
+    return allowed !== undefined && rest.every((arg) => allowed.test(arg));
+  }
+  if (name === "uniq") return args.every((arg) => arg.startsWith("-"));
+  if (!(name in READERS)) return false;
+  const denied = READERS[name];
+  return denied === null || !args.some((arg) => denied.test(arg));
+}
+
+/** Replaces the inside of quoted strings with spaces, so operators in them are ignored but positions stay put. */
+const mask = (command: string, quotes: RegExp) => command.replace(quotes, (m) => m[0] + " ".repeat(m.length - 2) + m[0]);
+
+/** Whether a bash command only reads: every stage is a reader, and nothing writes to a file or runs a substitution. */
 export function isReadOnly(command: string): boolean {
-  if (/(^|[^0-9&<])>(?!&)|>>|\$\(|`/.test(command)) return false;
-  if (/\bfind\b.*\s-(delete|exec|execdir|ok|fprint)/.test(command)) return false;
-  return command
-    .split(/&&|\|\||;|\||\n/)
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .every((part) => READ_ONLY.test(part.replace(/^(\w+=\S*\s+)+/, "")));
+  // Substitutions run inside double quotes too; only single quotes are inert.
+  if (/[<>]\(|\$\(|`/.test(mask(command, /'[^']*'/g))) return false;
+  // Allow only redirections that write nowhere, 2>&1 and >/dev/null, blanked out before splitting on & and |.
+  const harmless = (text: string) => text.replace(/\d*>&\d+|\d*>\s*\/dev\/null/g, (m) => " ".repeat(m.length));
+  const masked = harmless(mask(command, /'[^']*'|"[^"]*"/g));
+  if (/>/.test(masked)) return false;
+  command = harmless(command);
+  const stages: string[] = [];
+  let from = 0;
+  for (const separator of masked.matchAll(/&&|\|\||[;|&\n]/g)) {
+    stages.push(command.slice(from, separator.index));
+    from = separator.index! + separator[0].length;
+  }
+  stages.push(command.slice(from));
+  return stages.map((stage) => stage.trim()).every(isReadOnlyStage);
 }
 
 const lastText = (messages: readonly unknown[]): string => {
@@ -130,12 +168,15 @@ export default function (pi: ExtensionAPI) {
     planText = planning ? lastText(event.messages) : "";
   });
 
-  pi.on("agent_settled", async (event, ctx) => {
+  pi.on("agent_settled", (event, ctx) => {
     if (!planning || inherited || event.aborted || !ctx.hasUI || !/^#{1,3}\s*plan\b/im.test(planText)) return;
-    const choice = await ctx.ui.select("The plan is ready.", ["Implement it", "Keep planning"]);
-    if (choice !== "Implement it") return;
-    apply(ctx, false);
-    pi.appendEntry(ENTRY, { on: false });
-    pi.sendUserMessage("Plan approved. Plan mode is off: implement the plan above, then verify it.");
+    // Not awaited: pi waits for each agent_settled handler in turn, and the
+    // question would hold back the others (such as notify) until it's answered.
+    void ctx.ui.select("The plan is ready.", ["Implement it", "Keep planning"]).then((choice) => {
+      if (choice !== "Implement it" || !planning) return;
+      apply(ctx, false);
+      pi.appendEntry(ENTRY, { on: false });
+      pi.sendUserMessage("Plan approved. Plan mode is off: implement the plan above, then verify it.");
+    });
   });
 }

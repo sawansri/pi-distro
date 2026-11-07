@@ -93,7 +93,7 @@ if [ -z "$dev" ]; then
     done
   fi
   package_dir=$copy_dir
-else
+elif [ "$here" != "$copy_dir" ]; then
   # configure.mjs drops the copy from pi's settings; the files go too.
   rm -rf "$copy_dir"
 fi

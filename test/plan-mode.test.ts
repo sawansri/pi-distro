@@ -11,7 +11,14 @@ test("read-only commands pass", () => {
     "find . -name '*.ts' | wc -l",
     "grep -r x . 2>&1 | sort | uniq -c",
     "LC_ALL=C sort file",
-    "sed -n 1,20p a.txt",
+    "git branch -a",
+    "git remote -v",
+    "git tag --list",
+    "cat a 2>&1 >/dev/null",
+    "grep -o foo a.txt | sort | uniq -c",
+    "fd -e ts src",
+    "rg -n \"foo|bar\" src",
+    "grep '>' a.txt",
   ]) {
     assert.equal(isReadOnly(command), true, command);
   }
@@ -32,6 +39,27 @@ test("commands that write or aren't allowlisted are blocked", () => {
     "cat $(echo a)",
     "python3 -c 'open(\"x\",\"w\")'",
     "cat a | tee b",
+    "ls & rm -rf build",
+    "cat <(rm -rf build)",
+    "cat a 1>b",
+    "grep x . 2>err.log",
+    "env rm -rf build",
+    "awk 'BEGIN{system(\"rm x\")}'",
+    "sed -n '1w out' a",
+    "fd . -x rm",
+    "rg --pre ./cmd foo",
+    "find . -fls out",
+    "sort -o f a",
+    "sort --output=f a",
+    "uniq in out",
+    "tree -o f",
+    "git branch -D main",
+    "git branch new-branch",
+    "git tag -d v1",
+    "git tag v2",
+    "git remote remove origin",
+    "git diff --output=f",
+    "echo \"$(rm x)\"",
   ]) {
     assert.equal(isReadOnly(command), false, command);
   }

@@ -25,6 +25,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { type ExtensionAPI, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
+const DATE = "pi-distro-date";
+
 type Line = string | [tool: string, text: string];
 
 const MAIN: Line[] = [
@@ -95,25 +97,28 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => {
     prompt = undefined;
-    // A resumed session already has a date message (or predates this extension).
-    datedSession = ctx.sessionManager.getBranch().some((e: { type: string }) => e.type === "message");
+    // A resumed session already has its date message.
+    datedSession = ctx.sessionManager
+      .getBranch()
+      .some((e: { type: string; customType?: string }) => e.type === "custom_message" && e.customType === DATE);
   });
 
   pi.on("before_agent_start", (event) => {
     const options = event.systemPromptOptions;
     // A user-supplied --system-prompt or SYSTEM.md wins.
-    if (options.customPrompt) return;
-    if (prompt === undefined) {
-      const tools = options.selectedTools.filter((name) => !options.hiddenTools.includes(name));
-      prompt = render(isChild ? CHILD : MAIN, tools);
-      if (!isChild && tools.includes("subagent")) prompt += agentRoster();
+    if (!options.customPrompt || options.customPrompt === prompt) {
+      if (prompt === undefined) {
+        const tools = options.selectedTools.filter((name) => !options.hiddenTools.includes(name));
+        prompt = render(isChild ? CHILD : MAIN, tools);
+        if (!isChild && tools.includes("subagent")) prompt += agentRoster();
+      }
+      options.customPrompt = prompt;
     }
-    options.customPrompt = prompt;
 
     if (datedSession) return;
     datedSession = true;
     return {
-      message: { customType: "pi-distro-date", content: `Today's date is ${today()}.`, display: false },
+      message: { customType: DATE, content: `Today's date is ${today()}.`, display: false },
     };
   });
 }

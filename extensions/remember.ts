@@ -67,8 +67,12 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(text || "No notes yet. Add one with /remember <note>.", "info");
         return;
       }
-      const isGlobal = /^(-g|--global)\s+/.test(note);
-      note = note.replace(/^(-g|--global)\s+/, "");
+      const isGlobal = /^(-g|--global)(\s|$)/.test(note);
+      note = note.replace(/^(-g|--global)(\s+|$)/, "");
+      if (!note) {
+        ctx.ui.notify("Usage: /remember [-g] <note>", "warning");
+        return;
+      }
       if (isGlobal) save(globalFile(), note);
       else save(projectFile(ctx.cwd), note, `<!-- ${path.resolve(ctx.cwd)} -->`);
       pi.sendMessage(

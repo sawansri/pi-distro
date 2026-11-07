@@ -126,6 +126,12 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("message_end", (event, ctx) => {
     if (event.message.role !== "assistant" || !pending) return;
+    // A failed or stopped request reports no usable usage; compare the next one with the last good one.
+    const stopReason = (event.message as { stopReason?: string }).stopReason;
+    if (stopReason === "error" || stopReason === "aborted" || (!usage && !(event.message as { usage?: unknown }).usage)) {
+      pending = undefined;
+      return;
+    }
     const normalized = (event.message as { usage?: { input?: number; cacheRead?: number } }).usage;
     const cached = usage?.prompt_tokens_details?.cached_tokens ?? usage?.cached_tokens ?? normalized?.cacheRead ?? 0;
     const prompt = usage?.prompt_tokens ?? (normalized?.input ?? 0) + cached;
