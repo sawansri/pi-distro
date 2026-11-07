@@ -64,3 +64,21 @@ test("commands that write or aren't allowlisted are blocked", () => {
     assert.equal(isReadOnly(command), false, command);
   }
 });
+
+test("git options that write files or run programs are blocked", () => {
+  for (const command of [
+    "git log --output=tracked.ts",
+    "git log --output tracked.ts",
+    "git show --output=f HEAD",
+    "git diff --ext-diff",
+    "git log -p --ext-diff",
+    "git show --textconv HEAD:a.png",
+    "git grep -O foo",
+    "git grep --open-files-in-pager foo",
+  ]) {
+    assert.equal(isReadOnly(command), false, command);
+  }
+  for (const command of ["git log -p -5", "git show HEAD:a.ts", "git diff --stat HEAD~1", "git grep -n foo"]) {
+    assert.equal(isReadOnly(command), true, command);
+  }
+});

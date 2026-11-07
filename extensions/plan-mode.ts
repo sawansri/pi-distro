@@ -43,11 +43,14 @@ const READERS: Record<string, RegExp | null> = {
   tree: /^-o/,
 };
 
-/** git subcommands that only read; the rest of the arguments must match the pattern. */
+/** git options that write a file (--output) or run other programs (external diff, textconv filters, a pager). */
+const GIT_UNSAFE = /^(--output|--ext-diff|--textconv|-O|--open-files-in-pager)/;
+const anyGitArg = new RegExp(`^(?!${GIT_UNSAFE.source.slice(1)})`);
+
+/** git subcommands that only read; each of their other arguments must match the pattern. */
 const GIT: Record<string, RegExp> = {
-  status: /^/, log: /^/, show: /^/, blame: /^/, grep: /^/, "ls-files": /^/, "ls-tree": /^/,
-  "rev-parse": /^/, describe: /^/, shortlog: /^/,
-  diff: /^(?!--output)/,
+  status: /^/, "ls-files": /^/, "ls-tree": /^/, "rev-parse": /^/, describe: /^/,
+  log: anyGitArg, show: anyGitArg, diff: anyGitArg, blame: anyGitArg, grep: anyGitArg, shortlog: anyGitArg,
   branch: /^(-a|-r|-v|-vv|--all|--remotes|--list|--show-current|--verbose)$/,
   tag: /^(-l|--list)$/,
   remote: /^(-v|--verbose|get-url|show)$/,
