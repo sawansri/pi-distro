@@ -235,11 +235,13 @@ export default function (pi: ExtensionAPI) {
     serverUrl = (event.model as { baseUrl?: string }).baseUrl?.replace(/\/+$/, "").replace(/\/v1$/, "");
   });
 
-  pi.on("before_provider_request", (_event, ctx) => {
+  pi.on("before_provider_request", async (_event, ctx) => {
     usage = timings = undefined;
     if (!ctx.hasUI || !serverUrl) return;
     stopPolling();
-    void sample(ctx);
+    // pi awaits this handler, so the first sample sees the server before this
+    // request reaches it: whatever is running then belongs to other clients.
+    await sample(ctx);
     poll = setInterval(() => void sample(ctx), POLL_MS);
   });
 
