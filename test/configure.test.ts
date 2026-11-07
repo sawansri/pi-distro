@@ -49,3 +49,15 @@ test("moving gufo to another server picks up that server's models", async () => 
   assert.deepEqual(gufo.models.map((m: { id: string }) => m.id), ["model-b"]);
   assert.equal(readJson(path.join(d.agentDir, "settings.json")).defaultModel, "model-b");
 });
+
+test("an earlier install listed as ~/... or file://... is removed", async () => {
+  const d = dirs();
+  for (const name of ["clone-a", "clone-b"]) {
+    fs.mkdirSync(path.join(d.home, name));
+    fs.writeFileSync(path.join(d.home, name, "package.json"), JSON.stringify({ name: "pi-distro" }));
+  }
+  const packages = ["npm:pi-todo-lite@0.3.0", "~/clone-a", `file://${path.join(d.home, "clone-b")}`, "github:someone/pi-tools"];
+  fs.writeFileSync(path.join(d.agentDir, "settings.json"), JSON.stringify({ packages }));
+  await configure(d, "--gufo", await modelsServer("model-a"));
+  assert.deepEqual(readJson(path.join(d.agentDir, "settings.json")).packages, ["npm:pi-todo-lite@0.3.0", "github:someone/pi-tools"]);
+});

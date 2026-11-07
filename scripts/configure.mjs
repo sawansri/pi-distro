@@ -150,6 +150,15 @@ async function servedModels(baseUrl, base) {
   }
 }
 
+/** A local package source resolved as pi does: ~ is the home directory, file:// URLs are paths. */
+function localPackagePath(source) {
+  const trimmed = source.trim();
+  if (trimmed === "~") return os.homedir();
+  if (trimmed.startsWith("~/")) return path.join(os.homedir(), trimmed.slice(2));
+  if (trimmed.startsWith("file://")) return fileURLToPath(trimmed);
+  return path.resolve(agentDir, trimmed);
+}
+
 /** Default model, compaction, pi-lsp's skill, and the language servers found on PATH. */
 function configureSettings() {
   const file = target("settings.json");
@@ -172,8 +181,8 @@ function configureSettings() {
   // Earlier installs of this distro from another directory (a clone used with --dev, or the copy).
   settings.packages = settings.packages.filter((entry) => {
     const source = typeof entry === "string" ? entry : entry.source;
-    if (typeof source !== "string" || /^(npm|git|https?):/.test(source)) return true;
-    const resolved = path.resolve(agentDir, source);
+    if (typeof source !== "string" || /^(npm|git|github|https?|ssh|builtin):/.test(source.trim())) return true;
+    const resolved = localPackagePath(source);
     if (resolved === path.resolve(packageDir)) return true;
     const isDistro = readJson(path.join(resolved, "package.json")).value?.name === "pi-distro";
     if (isDistro) console.log(`  removed the earlier install at ${resolved} from pi's packages`);
