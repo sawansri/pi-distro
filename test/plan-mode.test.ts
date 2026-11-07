@@ -114,3 +114,12 @@ test("backslashes inside single quotes are fine", () => {
   assert.equal(isReadOnly("grep -n 'a\\.b' src"), true);
   assert.equal(isReadOnly("rg 'foo\\(' src"), true);
 });
+
+test("only locale variables may prefix a command", () => {
+  for (const command of ["GIT_EXTERNAL_DIFF=./x.sh git diff HEAD~1", "GIT_PAGER='sh -c x' git log", "LESSOPEN='|x %s' cat a", "PATH=. ls"]) {
+    assert.equal(isReadOnly(command), false, command);
+  }
+  for (const command of ["LC_ALL=C sort file", "LANG=C.UTF-8 LC_COLLATE=C ls"]) {
+    assert.equal(isReadOnly(command), true, command);
+  }
+});

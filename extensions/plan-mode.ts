@@ -61,7 +61,14 @@ const words = (command: string) =>
   (command.match(/(?:'[^']*'|"[^"]*"|[^\s'"])+/g) ?? []).map((word) => word.replace(/'([^']*)'|"([^"]*)"/g, "$1$2"));
 
 function isReadOnlyStage(stage: string): boolean {
-  const [name, ...args] = words(stage.replace(/^(\w+=\S*\s+)+/, ""));
+  const all = words(stage);
+  // Variable prefixes like GIT_EXTERNAL_DIFF or PAGER can make a reader run programs; only locale ones are allowed.
+  let start = 0;
+  while (start < all.length && /^\w+=/.test(all[start])) {
+    if (!/^(LANG|LC_\w+)=/.test(all[start])) return false;
+    start += 1;
+  }
+  const [name, ...args] = all.slice(start);
   if (name === undefined) return true;
   if (name === "git") {
     const [sub, ...rest] = args;
