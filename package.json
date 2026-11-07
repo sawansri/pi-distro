@@ -1,0 +1,19 @@
+{
+  "name": "pi-distro",
+  "version": "0.1.0",
+  "description": "A pi distro for local models on Strix Halo: small prompt, stable prompt cache, deep research.",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "pi": {
+    "extensions": [],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=1.5.0"
+  }
+}
