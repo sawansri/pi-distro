@@ -15,7 +15,7 @@ Qwen's chat template renders the system prompt, every tool definition, and the r
 ## Install
 
 ```sh
-git clone <this repo> pi-distro && cd pi-distro
+git clone https://github.com/sawansri/pi-distro && cd pi-distro
 ./install.sh --searxng http://localhost:8888 --sessions 4   # Linux, macOS
 pi
 ```
