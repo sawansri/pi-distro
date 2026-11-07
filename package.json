@@ -8,7 +8,9 @@
   "license": "MIT",
   "type": "module",
   "pi": {
-    "extensions": [],
+    "extensions": [
+      "./extensions/cache-guard.ts"
+    ],
     "skills": [
       "./skills"
     ]
