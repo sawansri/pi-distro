@@ -1,0 +1,1 @@
+{ "providers": ["searxng", "exa-mcp", "tavily", "brave"] }
