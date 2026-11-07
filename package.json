@@ -9,6 +9,8 @@
   "type": "module",
   "pi": {
     "extensions": [
+      "./extensions/tool-loadout.ts",
+      "./extensions/lean-prompt.ts",
       "./extensions/cache-guard.ts"
     ],
     "skills": [
