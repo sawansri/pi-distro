@@ -18,18 +18,33 @@ const request = (focus: string) =>
     .filter(Boolean)
     .join("\n");
 
-function lastAssistantText(entries: readonly unknown[]): string {
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const e = entries[i] as { type?: string; message?: { role?: string; content?: unknown; stopReason?: string } };
-    if (e.type !== "message" || e.message?.role !== "assistant") continue;
+/**
+ * The reply to the handoff request: the last assistant text after the request and
+ * before any later user message (one typed while the note was being written).
+ */
+export function noteFrom(entries: readonly unknown[]): string {
+  let note = "";
+  let seenRequest = false;
+  for (const entry of entries) {
+    const e = entry as { type?: string; message?: { role?: string; content?: unknown; stopReason?: string } };
+    if (e.type !== "message" || !e.message) continue;
+    if (e.message.role === "user") {
+      if (seenRequest) break;
+      seenRequest = true;
+      continue;
+    }
+    if (!seenRequest || e.message.role !== "assistant") continue;
     if (e.message.stopReason === "error" || e.message.stopReason === "aborted") return "";
     const content = e.message.content;
-    if (typeof content === "string") return content;
-    if (Array.isArray(content)) {
-      return content.map((c: { type?: string; text?: string }) => (c.type === "text" ? c.text : "")).join("");
-    }
+    const text =
+      typeof content === "string"
+        ? content
+        : Array.isArray(content)
+          ? content.map((c: { type?: string; text?: string }) => (c.type === "text" ? c.text : "")).join("")
+          : "";
+    if (text.trim()) note = text;
   }
-  return "";
+  return note;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -57,7 +72,7 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("Handoff stopped; staying in this session.", "warning");
         return;
       }
-      const note = lastAssistantText(ctx.sessionManager.getBranch().slice(before)).trim();
+      const note = noteFrom(ctx.sessionManager.getBranch().slice(before)).trim();
       if (!note) {
         ctx.ui.notify("The model didn't write a handoff note; staying in this session.", "error");
         return;
