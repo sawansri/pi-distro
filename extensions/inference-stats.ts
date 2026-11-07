@@ -16,6 +16,8 @@
  * so they aren't used for per-request rates.) The server part shows busy and
  * queued sessions and KV-cache use from Prometheus `/metrics`.
  *
+ * Only servers that answer `/props` (gufo, llama-server) are polled.
+ *
  * `/stats` shows the last request in full and this session's totals.
  */
 
@@ -189,6 +191,26 @@ export default function (pi: ExtensionAPI) {
     return parts.join(", ");
   }
 
+  /**
+   * Polls a model's server only if it answers /props like gufo or llama-server,
+   * so other providers (cloud APIs) never get /slots or /metrics requests.
+   */
+  async function connect(baseUrl: string | undefined) {
+    slots = undefined;
+    const url = baseUrl?.replace(/\/+$/, "").replace(/\/v1$/, "");
+    if (!url) return;
+    try {
+      const response = await fetch(`${url}/props`, { signal: AbortSignal.timeout(1000) });
+      if (!response.ok) return;
+      const props = await response.json();
+      if (typeof props !== "object" || props === null) return;
+      if (typeof props.total_slots === "number") slots = props.total_slots;
+      serverUrl = url;
+    } catch {
+      // No /props: not a server to poll.
+    }
+  }
+
   function show(ctx: ExtensionContext, text: string) {
     ctx.ui.setStatus("inference", text || undefined);
   }
@@ -231,21 +253,13 @@ export default function (pi: ExtensionAPI) {
     totals = emptyTotals();
     last = undefined;
     lastLine = "";
-    if (!ctx.hasUI) return;
-    const baseUrl = (ctx.model as { baseUrl?: string } | undefined)?.baseUrl;
-    serverUrl = baseUrl?.replace(/\/+$/, "").replace(/\/v1$/, "");
-    slots = undefined;
-    if (!serverUrl) return;
-    try {
-      const props = await (await fetch(`${serverUrl}/props`, { signal: AbortSignal.timeout(1000) })).json();
-      if (typeof props?.total_slots === "number") slots = props.total_slots;
-    } catch {
-      // Not a llama-server-compatible server: no slot count.
-    }
+    serverUrl = undefined;
+    if (ctx.hasUI) await connect((ctx.model as { baseUrl?: string } | undefined)?.baseUrl);
   });
 
-  pi.on("model_select", (event) => {
-    serverUrl = (event.model as { baseUrl?: string }).baseUrl?.replace(/\/+$/, "").replace(/\/v1$/, "");
+  pi.on("model_select", async (event, ctx) => {
+    serverUrl = undefined;
+    if (ctx.hasUI) await connect((event.model as { baseUrl?: string }).baseUrl);
   });
 
   pi.on("before_provider_request", async (_event, ctx) => {

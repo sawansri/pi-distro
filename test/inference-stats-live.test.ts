@@ -124,3 +124,23 @@ test("a sample that finishes after the response ends doesn't overwrite the final
   await delay(100);
   assert.match(s.statuses.at(-1)!, /^pp 100 @/);
 });
+
+test("doesn't poll a server that didn't answer /props", async () => {
+  const s = load("http://cloud.example/v1");
+  await s.handlers.session_start({}, s.ctx);
+  await send(s);
+  await poll();
+  await finish(s, 2000);
+  assert.deepEqual(requests, ["cloud.example/props"]);
+  assert.match(s.statuses.at(-1)!, /^pp 100 @/);
+});
+
+test("switching models re-checks the new server before polling it", async () => {
+  const s = load();
+  await s.handlers.session_start({}, s.ctx);
+  await s.handlers.model_select({ model: { baseUrl: "http://cloud.example/v1" } }, s.ctx);
+  requests = [];
+  await send(s);
+  await poll();
+  assert.deepEqual(requests, []);
+});
