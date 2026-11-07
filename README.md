@@ -60,3 +60,8 @@ A request carries about 2.8k tokens of prompt and tool declarations.
 
 - gufo shares a prompt prefix between concurrent requests only while one of them is prefilling it. When two subagents start together and the first restores the shared prefix from gufo's RAM cache, the second prefills it again.
 - pi-deep-research reads its providers and settings from `~/.pi/agent/pi-deep-research` even with `--dir`.
+- pi-deep-research asks for approval of its research plan. Given the topic and depth in one message, Qwen at medium thinking spends a while deciding whether to wait for approval before it goes ahead.
+
+## Edit tool
+
+The distro keeps pi's own `edit`. In `bench/edit`, Qwen 3.8 27B passed all 18 runs with it and no tool errors, while pi-hashline-edit-pro used 35% more input for the same result. Re-run the benchmark with your model to check.
