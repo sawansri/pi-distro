@@ -163,6 +163,8 @@ export default function (pi: ExtensionAPI) {
   let decodeStart: SlotSample | undefined;
   /** Tasks already running when this request was sent, which belong to other clients. */
   let foreign: Set<number> | undefined;
+  /** This request's task in /slots, once seen. */
+  let mineTask: number | undefined;
 
   async function metrics(): Promise<Map<string, number> | undefined> {
     if (!serverUrl) return undefined;
@@ -198,9 +200,11 @@ export default function (pi: ExtensionAPI) {
     } catch {
       // No /slots: show the last request's stats only.
     }
-    // This request's slot: the newest task that wasn't already running when it was sent.
     if (foreign === undefined) foreign = new Set(busy.map((slot) => slot.task));
-    const mine = busy.filter((slot) => !foreign!.has(slot.task)).sort((a, b) => b.task - a.task)[0];
+    // This request's task: the first one to appear that wasn't running when it was sent
+    // (tasks started later by other clients get higher ids), kept for the rest of the request.
+    mineTask ??= busy.filter((slot) => !foreign!.has(slot.task)).sort((a, b) => a.task - b.task)[0]?.task;
+    const mine = busy.find((slot) => slot.task === mineTask);
     const live = mine ? liveLine(mine, decodeStart) : "";
     if (mine && mine.decoded > 0 && decodeStart?.task !== mine.task) decodeStart = mine;
     show(ctx, [live || lastLine, server(await metrics())].filter(Boolean).join(" | "));
@@ -211,6 +215,7 @@ export default function (pi: ExtensionAPI) {
     poll = undefined;
     decodeStart = undefined;
     foreign = undefined;
+    mineTask = undefined;
   }
 
   pi.on("session_start", async (_event, ctx) => {

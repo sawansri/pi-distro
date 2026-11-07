@@ -91,3 +91,15 @@ test("the request's own task isn't mistaken for another client's when the first 
   await poll();
   assert.match(s.statuses.at(-1)!, /^decode 5/);
 });
+
+test("live progress stays on this request when another client starts one", async () => {
+  const s = load();
+  await s.handlers.session_start({}, s.ctx);
+  routes["/slots"] = () => [slot(-1, 0)];
+  await send(s);
+  routes["/slots"] = () => [slot(241, 10)];
+  await poll();
+  routes["/slots"] = () => [slot(241, 20), slot(242, 5000)];
+  await poll();
+  assert.match(s.statuses.at(-1)!, /^decode 20 /);
+});
