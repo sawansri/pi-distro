@@ -54,3 +54,17 @@ test("a subagent started while planning is read-only", () => {
   child.handlers.session_start({}, ctx());
   assert.equal(blocksWrite(child.handlers), true);
 });
+
+test("/tree restores the plan mode of the selected branch", async () => {
+  const s = load();
+  s.handlers.session_start({}, ctx());
+  await s.commands.plan.handler("", ctx()); // on
+  const planningBranch = [...s.entries];
+  await s.commands.plan.handler("", ctx()); // off
+  assert.equal(blocksWrite(s.handlers), false);
+
+  s.handlers.session_tree({}, ctx(planningBranch));
+  assert.equal(blocksWrite(s.handlers), true);
+  s.handlers.session_tree({}, ctx([]));
+  assert.equal(blocksWrite(s.handlers), false);
+});

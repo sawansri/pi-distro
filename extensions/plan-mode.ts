@@ -168,14 +168,18 @@ export default function (pi: ExtensionAPI) {
     pi.sendMessage({ customType: ENTRY, content: on ? ON_MESSAGE : OFF_MESSAGE, display: false }, { triggerTurn: false });
   }
 
-  pi.on("session_start", (_event, ctx) => {
+  /** Plan mode as last saved on the current branch. */
+  function restore(ctx: ExtensionContext) {
     if (inherited) return;
     const last = ctx.sessionManager
       .getBranch()
       .filter((e: { type: string; customType?: string }) => e.type === "custom" && e.customType === ENTRY)
       .pop() as { data?: { on?: unknown } } | undefined;
     apply(ctx, last?.data?.on === true);
-  });
+  }
+
+  pi.on("session_start", (_event, ctx) => restore(ctx));
+  pi.on("session_tree", (_event, ctx) => restore(ctx));
 
   pi.registerCommand("plan", {
     description: "Toggle plan mode (read-only exploration and planning)",
