@@ -108,38 +108,46 @@ async function configureModels() {
   if (!current) return;
   current.providers ??= {};
   const baseUrl = (args.gufo ?? DEFAULT_GUFO).replace(/\/+$/, "");
-  if (current.providers.gufo) {
-    if (args.gufo && current.providers.gufo.baseUrl !== baseUrl) {
-      current.providers.gufo.baseUrl = baseUrl;
-      writeJson(file, current);
-      console.log(`  wrote ${file}: gufo provider moved to ${baseUrl}`);
-    } else {
-      console.log(`  kept the gufo provider in ${file}`);
-    }
+  const existing = current.providers.gufo;
+  if (existing && !(args.gufo && existing.baseUrl !== baseUrl)) {
+    console.log(`  kept the gufo provider in ${file}`);
     return;
   }
   const template = readJson(config("models.template.json")).value.providers.gufo;
-  const provider = { ...template, baseUrl };
+  const models = await servedModels(baseUrl, template.models[0]);
+  if (existing) {
+    // Moved with --gufo: the new server may serve other models, and gufo rejects unknown IDs.
+    existing.baseUrl = baseUrl;
+    if (models) existing.models = models;
+    console.log(`  gufo provider moved to ${baseUrl}`);
+  } else {
+    current.providers.gufo = { ...template, baseUrl, ...(models && { models }) };
+  }
+  if (!models) {
+    const kept = existing ? "kept the model list" : "added its usual models";
+    console.warn(`  couldn't reach gufo at ${baseUrl}; ${kept}. Edit ${file} if the IDs differ.`);
+  }
+  writeJson(file, current);
+  console.log(`  wrote ${file}: gufo provider at ${baseUrl}`);
+}
+
+/** Model entries for what the server lists at /models, or undefined when it can't be reached. */
+async function servedModels(baseUrl, base) {
   try {
     const response = await fetch(`${baseUrl}/models`, { signal: AbortSignal.timeout(5000) });
     const served = (await response.json()).data ?? [];
-    if (served.length > 0) {
-      const base = template.models[0];
-      provider.models = served.map((m) => ({
-        ...base,
-        id: m.id,
-        name: `${m.id} (gufo)`,
-        input: m.architecture?.input_modalities?.includes("image") ? ["text", "image"] : ["text"],
-        contextWindow: m.context_length ?? base.contextWindow,
-      }));
-      console.log(`  found ${served.map((m) => m.id).join(", ")} on ${baseUrl}`);
-    }
+    if (served.length === 0) return undefined;
+    console.log(`  found ${served.map((m) => m.id).join(", ")} on ${baseUrl}`);
+    return served.map((m) => ({
+      ...base,
+      id: m.id,
+      name: `${m.id} (gufo)`,
+      input: m.architecture?.input_modalities?.includes("image") ? ["text", "image"] : ["text"],
+      contextWindow: m.context_length ?? base.contextWindow,
+    }));
   } catch {
-    console.warn(`  couldn't reach gufo at ${baseUrl}; added its usual models. Edit ${file} if the IDs differ.`);
+    return undefined;
   }
-  current.providers.gufo = provider;
-  writeJson(file, current);
-  console.log(`  wrote ${file}: gufo provider at ${baseUrl}`);
 }
 
 /** Default model, compaction, pi-lsp's skill, and the language servers found on PATH. */
@@ -148,7 +156,8 @@ function configureSettings() {
   const settings = mergeTarget(file);
   if (!settings) return;
   const models = readJson(target("models.json")).value?.providers?.gufo?.models ?? [];
-  if (!settings.defaultProvider && models.length > 0) {
+  const servesDefault = models.some((m) => m.id === settings.defaultModel);
+  if (models.length > 0 && (!settings.defaultProvider || (settings.defaultProvider === "gufo" && !servesDefault))) {
     settings.defaultProvider = "gufo";
     settings.defaultModel = models[0].id;
     console.log(`  default model: gufo/${models[0].id}`);
