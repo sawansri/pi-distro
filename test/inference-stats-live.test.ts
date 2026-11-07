@@ -103,3 +103,24 @@ test("live progress stays on this request when another client starts one", async
   await poll();
   assert.match(s.statuses.at(-1)!, /^decode 20 /);
 });
+
+test("a sample that finishes after the response ends doesn't overwrite the final stats", async () => {
+  const s = load();
+  await s.handlers.session_start({}, s.ctx);
+  routes["/slots"] = () => [slot(-1, 0)];
+  await send(s);
+  routes["/slots"] = () => [slot(241, 49)];
+  let slowMetrics = true;
+  routes["/metrics"] = async () => {
+    if (slowMetrics) {
+      slowMetrics = false;
+      await delay(60);
+    }
+    return "llamacpp:requests_processing 0\n";
+  };
+  mock.timers.tick(1000); // a sample starts; its /metrics call is slow
+  await delay(10);
+  await finish(s, 2000);
+  await delay(100);
+  assert.match(s.statuses.at(-1)!, /^pp 100 @/);
+});

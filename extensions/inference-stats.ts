@@ -163,6 +163,8 @@ export default function (pi: ExtensionAPI) {
   let decodeStart: SlotSample | undefined;
   /** Tasks already running when this request was sent, which belong to other clients. */
   let foreign: Set<number> | undefined;
+  /** Counts stopPolling() calls, so samples started before one can tell they're stale. */
+  let generation = 0;
   /** This request's task in /slots, once seen. */
   let mineTask: number | undefined;
 
@@ -193,6 +195,8 @@ export default function (pi: ExtensionAPI) {
 
   /** Live progress of this request from /slots, with server state from /metrics. */
   async function sample(ctx: ExtensionContext) {
+    // Polling stops when the response ends; a sample still in flight then must not show stale progress.
+    const current = generation;
     let busy: SlotSample[] = [];
     try {
       const response = await fetch(`${serverUrl}/slots`, { signal: AbortSignal.timeout(1000) });
@@ -200,6 +204,7 @@ export default function (pi: ExtensionAPI) {
     } catch {
       // No /slots: show the last request's stats only.
     }
+    if (current !== generation) return;
     if (foreign === undefined) foreign = new Set(busy.map((slot) => slot.task));
     // This request's task: the first one to appear that wasn't running when it was sent
     // (tasks started later by other clients get higher ids), kept for the rest of the request.
@@ -207,10 +212,13 @@ export default function (pi: ExtensionAPI) {
     const mine = busy.find((slot) => slot.task === mineTask);
     const live = mine ? liveLine(mine, decodeStart) : "";
     if (mine && mine.decoded > 0 && decodeStart?.task !== mine.task) decodeStart = mine;
-    show(ctx, [live || lastLine, server(await metrics())].filter(Boolean).join(" | "));
+    const load = server(await metrics());
+    if (current !== generation) return;
+    show(ctx, [live || lastLine, load].filter(Boolean).join(" | "));
   }
 
   function stopPolling() {
+    generation += 1;
     if (poll) clearInterval(poll);
     poll = undefined;
     decodeStart = undefined;
