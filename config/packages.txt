@@ -1,0 +1,8 @@
+# Upstream pi packages, pinned to the versions this distro was tested with.
+npm:pi-deep-research@0.4.1
+npm:pi-lite-subagent@0.3.0
+npm:pi-todo-lite@0.3.0
+npm:@ian-pascoe/pi-lsp@0.15.5
+npm:pi-workspace-history@0.5.2
+npm:pi-subdir-context@1.1.7
+npm:pi-cached-compaction@0.2.0

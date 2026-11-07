@@ -17,9 +17,6 @@
       "./extensions/remember.ts",
       "./extensions/handoff.ts",
       "./extensions/notify.ts"
-    ],
-    "skills": [
-      "./skills"
     ]
   },
   "peerDependencies": {
@@ -31,10 +28,11 @@
   "files": [
     "agents",
     "extensions",
-    "skills",
     "config",
+    "providers",
     "scripts",
     "install.sh",
-    "LICENSE"
+    "LICENSE",
+    "README.md"
   ]
 }
