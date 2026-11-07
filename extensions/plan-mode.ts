@@ -74,16 +74,43 @@ function isReadOnlyStage(stage: string): boolean {
   return denied === null || !args.some((arg) => denied.test(arg));
 }
 
-/** Replaces the inside of quoted strings with spaces, so operators in them are ignored but positions stay put. */
-const mask = (command: string, quotes: RegExp) => command.replace(quotes, (m) => m[0] + " ".repeat(m.length - 2) + m[0]);
+/**
+ * Walks the command with the shell's quoting rules and returns it with the
+ * inside of every quoted string blanked out (quotes and positions kept), so
+ * operators in quotes are ignored. Returns undefined for anything it doesn't
+ * model: a backslash outside single quotes, `$'...'`, or a command or process
+ * substitution outside single quotes.
+ */
+function maskQuotes(command: string): string | undefined {
+  let masked = "";
+  let quote: "'" | '"' | undefined;
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    if (quote === "'") {
+      masked += c === "'" ? c : " ";
+      if (c === "'") quote = undefined;
+      continue;
+    }
+    if (c === "\\" || c === "`" || (c === "$" && (command[i + 1] === "(" || (!quote && command[i + 1] === "'")))) return undefined;
+    if (quote === '"') {
+      masked += c === '"' ? c : " ";
+      if (c === '"') quote = undefined;
+      continue;
+    }
+    if ((c === "<" || c === ">") && command[i + 1] === "(") return undefined;
+    if (c === "'" || c === '"') quote = c;
+    masked += c;
+  }
+  return quote ? undefined : masked;
+}
 
 /** Whether a bash command only reads: every stage is a reader, and nothing writes to a file or runs a substitution. */
 export function isReadOnly(command: string): boolean {
-  // Substitutions run inside double quotes too; only single quotes are inert.
-  if (/[<>]\(|\$\(|`/.test(mask(command, /'[^']*'/g))) return false;
+  const quoted = maskQuotes(command);
+  if (quoted === undefined) return false;
   // Allow only redirections that write nowhere, 2>&1 and >/dev/null, blanked out before splitting on & and |.
   const harmless = (text: string) => text.replace(/\d*>&\d+|\d*>\s*\/dev\/null/g, (m) => " ".repeat(m.length));
-  const masked = harmless(mask(command, /'[^']*'|"[^"]*"/g));
+  const masked = harmless(quoted);
   if (/>/.test(masked)) return false;
   command = harmless(command);
   const stages: string[] = [];

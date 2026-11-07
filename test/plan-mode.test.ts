@@ -96,3 +96,21 @@ test("quoting an option doesn't hide it", () => {
   }
   assert.equal(isReadOnly('grep -n "foo bar" src/a.ts'), true);
 });
+
+test("backslash escapes and ANSI-C quotes are refused", () => {
+  for (const command of [
+    "echo \\' ; touch /tmp/pwn ; echo \\'",
+    "echo \\' $(rm x) \\'",
+    "echo \\' > f \\'",
+    "echo \\\" ; rm a ; echo \\\"",
+    "echo $'\\x3b' ; rm a",
+    "echo \"it's $(rm x)\" 'y'",
+  ]) {
+    assert.equal(isReadOnly(command), false, command);
+  }
+});
+
+test("backslashes inside single quotes are fine", () => {
+  assert.equal(isReadOnly("grep -n 'a\\.b' src"), true);
+  assert.equal(isReadOnly("rg 'foo\\(' src"), true);
+});
