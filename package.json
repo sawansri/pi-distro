@@ -10,6 +10,7 @@
   "pi": {
     "extensions": [
       "./extensions/tool-loadout.ts",
+      "./extensions/subagents.ts",
       "./extensions/lean-prompt.ts",
       "./extensions/cache-guard.ts",
       "./extensions/plan-mode.ts"
@@ -23,5 +24,14 @@
   },
   "scripts": {
     "test": "node --test test/*.test.ts"
-  }
+  },
+  "files": [
+    "agents",
+    "extensions",
+    "skills",
+    "config",
+    "scripts",
+    "install.sh",
+    "LICENSE"
+  ]
 }

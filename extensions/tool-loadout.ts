@@ -13,20 +13,14 @@
  * built-in tools.
  */
 
-import * as fs from "node:fs";
-import * as path from "node:path";
-import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { readConfig } from "./config.ts";
 
 const DEFAULT_DISABLED = ["lsp_*"];
 
 function disabledPatterns(): string[] {
-  try {
-    const config = JSON.parse(fs.readFileSync(path.join(getAgentDir(), "pi-distro.json"), "utf-8"));
-    if (Array.isArray(config?.disabledTools)) return config.disabledTools.map(String);
-  } catch {
-    // No config file: use the defaults.
-  }
-  return DEFAULT_DISABLED;
+  const configured = readConfig().disabledTools;
+  return Array.isArray(configured) ? configured.map(String) : DEFAULT_DISABLED;
 }
 
 const matches = (name: string, pattern: string) =>
