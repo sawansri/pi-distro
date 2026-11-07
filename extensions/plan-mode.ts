@@ -56,8 +56,9 @@ const GIT: Record<string, RegExp> = {
   remote: /^(-v|--verbose|get-url|show)$/,
 };
 
-/** Splits a command into words, keeping quoted strings together. */
-const words = (command: string) => command.match(/'[^']*'|"[^"]*"|\S+/g) ?? [];
+/** Splits a command into words as the shell does, removing quotes: `-"de"lete` is `-delete`. */
+const words = (command: string) =>
+  (command.match(/(?:'[^']*'|"[^"]*"|[^\s'"])+/g) ?? []).map((word) => word.replace(/'([^']*)'|"([^"]*)"/g, "$1$2"));
 
 function isReadOnlyStage(stage: string): boolean {
   const [name, ...args] = words(stage.replace(/^(\w+=\S*\s+)+/, ""));

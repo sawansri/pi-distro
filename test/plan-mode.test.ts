@@ -82,3 +82,17 @@ test("git options that write files or run programs are blocked", () => {
     assert.equal(isReadOnly(command), true, command);
   }
 });
+
+test("quoting an option doesn't hide it", () => {
+  for (const command of [
+    'find . -name victim.txt "-delete"',
+    "find . -name v -\"de\"lete",
+    "sort '-o' f a",
+    'fd . "-x" rm',
+    'git log "--output=f"',
+    "'git' log --output=f",
+  ]) {
+    assert.equal(isReadOnly(command), false, command);
+  }
+  assert.equal(isReadOnly('grep -n "foo bar" src/a.ts'), true);
+});
