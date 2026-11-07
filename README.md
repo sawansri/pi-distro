@@ -42,6 +42,7 @@ The installer installs pi if needed, then the pinned packages in `config/package
 | AGENTS.md in subdirectories | [pi-subdir-context](https://www.npmjs.com/package/pi-subdir-context) | automatic, on read |
 | Compaction from the prompt cache | [pi-cached-compaction](https://www.npmjs.com/package/pi-cached-compaction) | automatic, `/compact` |
 | Cache hit rate and miss warnings | `extensions/cache-guard.ts` | footer; warns with the cause |
+| Inference stats from gufo | `extensions/inference-stats.ts` | footer: prefill, decode, TTFT, draft acceptance, live progress, server load; `/stats` |
 | Notes across sessions | `extensions/remember.ts` | `/remember <note>`, `-g` for all projects |
 | Handoff to a fresh session | `extensions/handoff.ts` | `/handoff [focus]` |
 | Notification after long runs | `extensions/notify.ts` | runs of 30s or more |
@@ -55,6 +56,16 @@ A request carries about 2.8k tokens of prompt and tool declarations.
 - `PI_DISTRO_CACHE_WARN_TOKENS` (default 1024): reprocessed tokens that trigger a cache warning. `PI_DISTRO_CACHE_LOG=<file>` logs every request's cache use, also from subagents and print mode.
 - `PI_DISTRO_NOTIFY_SECONDS` (default 30).
 - Thinking level: `alt+t`, or `defaultThinkingLevel` in `settings.json`. gufo renders it at the start of the prompt, so change it before a session rather than during one.
+
+## Inference stats
+
+The footer shows the last request as measured by gufo, from its per-request `usage.gufo`:
+
+```
+pp 3.2k @ 1.8k t/s · tg 412 @ 71.2 t/s · ttft 1.9s · draft 78% | srv 1/4 busy, kv 12%
+```
+
+`pp` is the prompt tokens gufo processed (not those restored from cache) and their rate, `tg` the generated tokens and decode rate, `ttft` gufo's time to first token, and `draft` the share of speculative draft tokens accepted. While a response streams, the first part shows its progress from gufo's `/slots`: `prefill 1.2k/3.0k`, then `decode 45 @ 71.2 t/s`, the rate measured from the first sample taken mid-decode. The `srv` part comes from gufo's Prometheus `/metrics`: busy and queued sessions and KV-cache use. Prometheus's token counters cover every client and advance in 512-token prefill chunks, so per-request rates come from gufo's own measurements instead. `/stats` shows the last request in full and the session's totals. With llama-server, the same fields come from its `timings`.
 
 ## Known gaps
 
