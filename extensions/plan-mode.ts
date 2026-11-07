@@ -143,8 +143,10 @@ const lastText = (messages: readonly unknown[]): string => {
 };
 
 export default function (pi: ExtensionAPI) {
-  // A subagent started while its parent was planning stays read-only.
-  const inherited = process.env[ENV] === "1";
+  // A subagent started while its parent was planning stays read-only. In the
+  // parent the variable may be left from an earlier session in this process
+  // (/new, /resume and /reload reload extensions without a new process).
+  const inherited = process.env[ENV] === "1" && Boolean(process.env.PI_SUBAGENT_DEPTH);
   let planning = inherited;
   let planText = "";
 
