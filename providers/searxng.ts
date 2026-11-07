@@ -2,37 +2,44 @@
  * pi-deep-research search provider: SearXNG (local metasearch).
  * From pi-deep-research's examples/providers/searxng.ts (MIT), ported from PR #4 by @fank.
  *
- * Install:
- *   1. cp searxng.ts ~/.pi/agent/pi-deep-research/providers/
- *   2. export SEARXNG_BASE_URL=http://localhost:4000
- *   3. list "searxng" in ~/.pi/agent/pi-deep-research/config.json (or SEARCH_PROVIDERS=searxng)
- *   4. /reload
+ * The instance URL comes from SEARXNG_BASE_URL, or else from "baseUrl" in
+ * ~/.pi/agent/pi-deep-research/searxng.json, which pi-distro's installer
+ * writes (`--searxng <url>`), so it works without the variable in every shell.
  *
- * GOTCHA: SearXNG's JSON API is DISABLED BY DEFAULT (returns 403).
- * In your searxng/settings.yml you must enable:
+ * SearXNG's JSON API is off by default (403). Enable it in settings.yml:
  *   search:
  *     formats:
  *       - html
  *       - json
  */
 
-// Self-contained type shims: keep this file editor-clean when copied to
-// ~/.pi/agent/pi-deep-research/providers/, where no @types/node exists.
-declare const process: { env: Record<string, string | undefined> };
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+function baseUrl(): string | undefined {
+	if (process.env.SEARXNG_BASE_URL) return process.env.SEARXNG_BASE_URL;
+	try {
+		const config = JSON.parse(readFileSync(join(homedir(), ".pi", "agent", "pi-deep-research", "searxng.json"), "utf-8"));
+		return typeof config?.baseUrl === "string" && config.baseUrl ? config.baseUrl : undefined;
+	} catch {
+		return undefined;
+	}
+}
 
 export default {
 	name: "searxng",
 	tier: "local" as const,
-	isConfigured: () => Boolean(process.env.SEARXNG_BASE_URL),
+	isConfigured: () => Boolean(baseUrl()),
 	async search(req: { query: string; maxResults: number; signal?: AbortSignal }) {
-		const baseUrl = process.env.SEARXNG_BASE_URL!.replace(/\/+$/, "");
+		const base = baseUrl()!.replace(/\/+$/, "");
 		const params = new URLSearchParams({
 			q: req.query,
 			format: "json",
 			language: "en",
 			categories: "general",
 		});
-		const resp = await fetch(`${baseUrl}/search?${params}`, {
+		const resp = await fetch(`${base}/search?${params}`, {
 			signal: req.signal ?? AbortSignal.timeout(30000),
 		});
 
