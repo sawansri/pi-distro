@@ -148,9 +148,11 @@ interface Totals {
   decodeTokens: number;
   decodeMs: number;
   ttftMs: number;
+  /** Requests that reported a time to first token. */
+  ttftRequests: number;
 }
 
-const emptyTotals = (): Totals => ({ requests: 0, prefillTokens: 0, prefillMs: 0, cachedTokens: 0, decodeTokens: 0, decodeMs: 0, ttftMs: 0 });
+const emptyTotals = (): Totals => ({ requests: 0, prefillTokens: 0, prefillMs: 0, cachedTokens: 0, decodeTokens: 0, decodeMs: 0, ttftMs: 0, ttftRequests: 0 });
 
 export default function (pi: ExtensionAPI) {
   let serverUrl: string | undefined;
@@ -290,7 +292,10 @@ export default function (pi: ExtensionAPI) {
     totals.cachedTokens += stats.cachedTokens;
     totals.decodeTokens += stats.decodeTokens;
     totals.decodeMs += stats.decodeMs ?? 0;
-    totals.ttftMs += stats.ttftMs ?? 0;
+    if (stats.ttftMs !== undefined) {
+      totals.ttftMs += stats.ttftMs;
+      totals.ttftRequests += 1;
+    }
     lastLine = formatRequest(stats);
     show(ctx, [lastLine, server(await metrics())].filter(Boolean).join(" | "));
   });
@@ -314,8 +319,8 @@ export default function (pi: ExtensionAPI) {
         `This session: ${totals.requests} request${totals.requests === 1 ? "" : "s"}`,
         `  prefill ${totals.prefillTokens.toLocaleString()} tokens${pp ? ` @ ${compact(pp)} t/s` : ""}, ${totals.cachedTokens.toLocaleString()} from cache`,
         `  decode ${totals.decodeTokens.toLocaleString()} tokens${tg ? ` @ ${compact(tg)} t/s` : ""}`,
-        `  mean ttft ${seconds(totals.ttftMs / totals.requests)}`,
       ];
+      if (totals.ttftRequests > 0) lines.push(`  mean ttft ${seconds(totals.ttftMs / totals.ttftRequests)}`);
       const m = await metrics();
       if (m) lines.push(`Server: ${server(m)}`);
       ctx.ui.notify(lines.join("\n"), "info");

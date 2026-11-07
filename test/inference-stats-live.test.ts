@@ -144,3 +144,14 @@ test("switching models re-checks the new server before polling it", async () => 
   await poll();
   assert.deepEqual(requests, []);
 });
+
+test("mean TTFT counts only requests that reported one", async () => {
+  const s = load();
+  await s.handlers.session_start({}, s.ctx);
+  await send(s);
+  await finish(s, 2000);
+  await send(s);
+  await finish(s);
+  await s.commands.stats.handler("", s.ctx);
+  assert.match(s.notes.at(-1)!, /mean ttft 2\.0s/);
+});
