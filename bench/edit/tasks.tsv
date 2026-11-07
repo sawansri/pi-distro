@@ -1,0 +1,6 @@
+offbyone	total_value in inventory.py skips the last item. Fix the bug.
+param	Add an optional parameter currency="USD" to report() in inventory.py and append " " + currency to each line it builds.
+nearDup	In config.py, change the low bound of the "large" entry in LIMITS from 10 to 50. Leave the other entries unchanged.
+elif	In describe() in config.py, return "huge" when high is greater than 4000, checked before the existing "big" check.
+rename	Rename the function cheapest to cheapest_item in inventory.py. There are no other callers.
+multi	In inventory.py, make restock() raise ValueError("amount must be positive") when amount <= 0, and make load_items() skip rows whose quantity is 0.
