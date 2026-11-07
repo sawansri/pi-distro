@@ -93,6 +93,9 @@ if [ -z "$dev" ]; then
     done
   fi
   package_dir=$copy_dir
+else
+  # configure.mjs drops the copy from pi's settings; the files go too.
+  rm -rf "$copy_dir"
 fi
 echo "  $package_dir"
 "$pi" install "$package_dir" </dev/null >/dev/null
