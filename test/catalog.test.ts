@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, test } from "node:test";
-import { authHeaders, catalogModel, catalogProviders, fetchCatalog, isPlaceholder, mergeModels, servedApi } from "../extensions/catalog.ts";
+import { advertisedHeader, authHeaders, catalogModel, catalogProviders, fetchCatalog, isPlaceholder, mergeModels, servedApi } from "../extensions/catalog.ts";
 
 const servers: http.Server[] = [];
 after(() => servers.forEach((server) => server.close()));
@@ -135,4 +135,56 @@ test("a configured subscription-key header is sent, and authHeaders honours it",
   // A bearer token is sent alongside; a gateway that wants only its own header
   // ignores it, and one that wants a bearer token gets it without extra config.
   assert.equal(headers.authorization, "Bearer secret");
+});
+
+test("a 401 that names the header it wants is retried with it", async () => {
+  // This is what lets the template stay vendor-neutral: a gateway using a
+  // subscription key advertises it in www-authenticate, so the catalogue is
+  // recovered without hand-editing the template first.
+  let calls = 0;
+  const server = http.createServer((req, res) => {
+    calls += 1;
+    const key = req.headers["ocp-apim-subscription-key"];
+    if (key !== "secret") {
+      res.statusCode = 401;
+      res.setHeader("www-authenticate", 'AzureApiManagementKey realm="https://gw.test/",name="Ocp-Apim-Subscription-Key",type="header"');
+      res.end(JSON.stringify({ statusCode: 401, message: "Access denied due to missing subscription key." }));
+      return;
+    }
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ data: [entry("recovered")] }));
+  });
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+
+  const result = await fetchCatalog(url, { apiKey: "$K" }, { K: "secret" } as any);
+  assert.deepEqual(result.entries?.map((m: any) => m.id), ["recovered"]);
+  assert.equal(calls, 2, "expected the initial request plus one retry");
+});
+
+test("a 401 with no usable hint is reported, not retried blindly", async () => {
+  let calls = 0;
+  const server = http.createServer((_req, res) => {
+    calls += 1;
+    res.statusCode = 401;
+    // A hint that is not a plain header name must not be turned into a header.
+    res.setHeader("www-authenticate", 'Basic realm="x",name="bad header\\r\\nX-Evil"');
+    res.end("{}");
+  });
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+  const result = await fetchCatalog(url, { apiKey: "$K" }, { K: "secret" } as any);
+  assert.equal(result.entries, undefined);
+  assert.equal(calls, 1, "an unusable hint must not trigger a retry");
+});
+
+test("advertisedHeader only accepts a plain header name", () => {
+  const withHeader = (v: string) => advertisedHeader({ headers: { get: () => v } });
+  assert.equal(withHeader('Bearer realm="x",name="Ocp-Apim-Subscription-Key"'), "Ocp-Apim-Subscription-Key");
+  assert.equal(withHeader('Basic realm="x",name="Bad Header"'), undefined);
+  assert.equal(withHeader('Basic realm="x",name="X-Evil\\r\\nInjected"'), undefined);
+  assert.equal(withHeader(""), undefined);
+  assert.equal(withHeader(undefined as any), undefined);
 });

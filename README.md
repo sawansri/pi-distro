@@ -64,17 +64,20 @@ restart afterwards.
 ### If your gateway wants its own auth header
 
 The template sends a bearer token, which most gateways accept. Azure API
-Management and some enterprise proxies want a subscription-key header instead.
-Add it to the provider's `headers` and the catalogue probe uses it too:
+Management and some enterprise proxies want a subscription-key header instead,
+and they say so: a `401` carries
+
+```
+www-authenticate: AzureApiManagementKey realm="…",name="Ocp-Apim-Subscription-Key",type="header"
+```
+
+The catalogue request reads that name and retries with it, so a neutral template
+still gets the gateway's own prices — no edit needed. Setting the header
+explicitly works too, and is worth doing if you want it visible in `models.json`:
 
 ```json
 "headers": { "Ocp-Apim-Subscription-Key": "$LLM_GATEWAY_KEY" }
 ```
-
-Without it, such a gateway answers `401` to the catalogue request; the install
-still completes, but from the template's fallback model list rather than the
-gateway's own prices. `/models-refresh` reports the same error, so you can add
-the header and re-run it once `/models-refresh` finds the catalogue.
 
 ## What the installer works out for you
 

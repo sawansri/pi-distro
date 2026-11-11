@@ -154,6 +154,29 @@ export function authHeaders(provider, env = process.env) {
  * reported as "no catalogue" rather than thrown. `PI_DISTRO_NO_CATALOG=1`
  * skips it entirely, for an offline or air-gapped install.
  */
+/**
+ * The header name a 401 says it wanted, from `www-authenticate`.
+ *
+ * APIM advertises `name="Ocp-Apim-Subscription-Key"`, and a proxy that wants its
+ * own header usually does the same. Reading it means a gateway with a
+ * non-standard scheme works without hand-editing the template first.
+ */
+export function advertisedHeader(response) {
+  const value = response?.headers?.get?.("www-authenticate") ?? "";
+  const name = /name="([^"]+)"/.exec(value)?.[1];
+  // Only a plain header name, so a crafted header cannot inject another header.
+  return name && /^[A-Za-z0-9-]+$/.test(name) ? name : undefined;
+}
+
+/**
+ * Fetch `<baseUrl>/models` from a gateway.
+ *
+ * Optional by design: the gateway is the user's, not ours, so this is the only
+ * request the distro makes to it on its own initiative, and every failure (no
+ * key, no route, a slow server, an endpoint that publishes no catalogue) is
+ * reported as "no catalogue" rather than thrown. `PI_DISTRO_NO_CATALOG=1`
+ * skips it entirely, for an offline or air-gapped install.
+ */
 export async function fetchCatalog(baseUrl, provider, env = process.env, timeoutMs = 3000) {
   if (env.PI_DISTRO_NO_CATALOG) return { error: "catalogue fetching disabled by PI_DISTRO_NO_CATALOG" };
   if (!/^https?:\/\//.test(baseUrl ?? "") || isPlaceholder(baseUrl)) {
@@ -164,12 +187,25 @@ export async function fetchCatalog(baseUrl, provider, env = process.env, timeout
   if (!key && !Object.keys(headers).some((h) => /authorization|api-key/i.test(h))) {
     return { error: "no API key configured for the gateway" };
   }
-  try {
-    const response = await fetch(`${baseUrl}/models`, { headers, signal: AbortSignal.timeout(timeoutMs) });
+  const read = async (response) => {
     if (!response.ok) return { error: `gateway answered ${response.status} to /models` };
     const body = await response.json();
     const entries = Array.isArray(body?.data) ? body.data : undefined;
     return entries && entries.length > 0 ? { entries } : { error: "the gateway published no models" };
+  };
+  try {
+    const first = await fetch(`${baseUrl}/models`, { headers, signal: AbortSignal.timeout(timeoutMs) });
+    if (first.ok) return read(first);
+    // A 401 that names the header it wants: send that and try once more. This is
+    // what makes the template vendor-neutral without losing the catalogue on a
+    // gateway that uses a subscription key.
+    const wanted = first.status === 401 ? advertisedHeader(first) : undefined;
+    if (!wanted || !key) return { error: `gateway answered ${first.status} to /models` };
+    const retry = await fetch(`${baseUrl}/models`, {
+      headers: { ...headers, [wanted]: key },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    return read(retry);
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }
