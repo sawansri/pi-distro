@@ -18,6 +18,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { type Stage, stages, writesFile } from "./shell-parse.ts";
 
 const ENV = "PI_DISTRO_PLAN_MODE";
 const ENTRY = "pi-distro-plan";
@@ -56,19 +57,10 @@ const GIT: Record<string, RegExp> = {
   remote: /^(-v|--verbose|get-url|show)$/,
 };
 
-/** Splits a command into words as the shell does, removing quotes: `-"de"lete` is `-delete`. */
-const words = (command: string) =>
-  (command.match(/(?:'[^']*'|"[^"]*"|[^\s'"])+/g) ?? []).map((word) => word.replace(/'([^']*)'|"([^"]*)"/g, "$1$2"));
-
-function isReadOnlyStage(stage: string): boolean {
-  const all = words(stage);
+function isReadOnlyStage(stage: Stage): boolean {
   // Variable prefixes like GIT_EXTERNAL_DIFF or PAGER can make a reader run programs; only locale ones are allowed.
-  let start = 0;
-  while (start < all.length && /^\w+=/.test(all[start])) {
-    if (!/^(LANG|LC_\w+)=/.test(all[start])) return false;
-    start += 1;
-  }
-  const [name, ...args] = all.slice(start);
+  if (stage.env.some((assignment) => !/^(LANG|LC_\w+)=/.test(assignment))) return false;
+  const { name, args } = stage;
   if (name === undefined) return true;
   if (name === "git") {
     const [sub, ...rest] = args;
@@ -81,53 +73,13 @@ function isReadOnlyStage(stage: string): boolean {
   return denied === null || !args.some((arg) => denied.test(arg));
 }
 
-/**
- * Walks the command with the shell's quoting rules and returns it with the
- * inside of every quoted string blanked out (quotes and positions kept), so
- * operators in quotes are ignored. Returns undefined for anything it doesn't
- * model: a backslash outside single quotes, `$'...'`, or a command or process
- * substitution outside single quotes.
- */
-function maskQuotes(command: string): string | undefined {
-  let masked = "";
-  let quote: "'" | '"' | undefined;
-  for (let i = 0; i < command.length; i++) {
-    const c = command[i];
-    if (quote === "'") {
-      masked += c === "'" ? c : " ";
-      if (c === "'") quote = undefined;
-      continue;
-    }
-    if (c === "\\" || c === "`" || (c === "$" && (command[i + 1] === "(" || (!quote && command[i + 1] === "'")))) return undefined;
-    if (quote === '"') {
-      masked += c === '"' ? c : " ";
-      if (c === '"') quote = undefined;
-      continue;
-    }
-    if ((c === "<" || c === ">") && command[i + 1] === "(") return undefined;
-    if (c === "'" || c === '"') quote = c;
-    masked += c;
-  }
-  return quote ? undefined : masked;
-}
-
 /** Whether a bash command only reads: every stage is a reader, and nothing writes to a file or runs a substitution. */
 export function isReadOnly(command: string): boolean {
-  const quoted = maskQuotes(command);
-  if (quoted === undefined) return false;
-  // Allow only redirections that write nowhere, 2>&1 and >/dev/null, blanked out before splitting on & and |.
-  const harmless = (text: string) => text.replace(/\d*>&\d+|\d*>\s*\/dev\/null/g, (m) => " ".repeat(m.length));
-  const masked = harmless(quoted);
-  if (/>/.test(masked)) return false;
-  command = harmless(command);
-  const stages: string[] = [];
-  let from = 0;
-  for (const separator of masked.matchAll(/&&|\|\||[;|&\n]/g)) {
-    stages.push(command.slice(from, separator.index));
-    from = separator.index! + separator[0].length;
-  }
-  stages.push(command.slice(from));
-  return stages.map((stage) => stage.trim()).every(isReadOnlyStage);
+  // Unparseable shells fail closed: a command this scanner does not model is not read-only.
+  const parts = stages(command);
+  if (!parts) return false;
+  if (parts.some((stage) => writesFile(stage.masked))) return false;
+  return parts.every((stage) => isReadOnlyStage(stage));
 }
 
 const lastText = (messages: readonly unknown[]): string => {

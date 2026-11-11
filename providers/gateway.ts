@@ -14,11 +14,15 @@
  * - `openai-responses` has one `web_search` tool that both searches and opens
  *   pages, so `extract()` asks it to read the URL.
  *
- * Not every model runs the tool. The gateway accepts `tools` on models that
- * ignore it, and those answer from memory, which reads like success. So the
- * configured search model is probed once per cache lifetime and the result is
- * kept in `~/.pi/agent/gateway-search.json`; a model that fails is reported as
- * unconfigured, so the chain moves on instead of trusting a fabricated answer.
+ * Not every model runs the tool. The gateway accepts `tools` on an API where a
+ * model is not really served, and answers from an unpinned default pool that
+ * reads like success while billing another model's rates. So the search model
+ * is picked from an API that has a search tool at all, probed once per cache
+ * lifetime, and every real search response is checked for an actual tool call.
+ * The result is kept in `~/.pi/agent/gateway-search.json`; a model that fails is
+ * reported as unconfigured, so the chain moves on instead of trusting a
+ * fabricated answer. Auth and gateway errors are never cached, so fixing a key
+ * takes effect on the next call.
  *
  * Writes nothing but that cache file. The gateway URL and key come from
  * models.json, with $VARS resolved, so there is no second place to set them.
@@ -46,8 +50,19 @@ const EXTRACT_SYSTEM = [
 const PROBE_PROMPT = "Search the web, then answer in one sentence: what is one news headline from today?";
 const TIMEOUT_MS = 120_000;
 
+/**
+ * The api a model is served on: its own, else its provider's.
+ *
+ * models.json allows a per-model `api`, and the gateway catalogue uses it: one
+ * endpoint serves both OpenAI paths, so a provider-level api is only the
+ * default. Reading the provider's alone sent a chat-completions-only model to
+ * /v1/responses, where the gateway accepts it, answers from an unpinned pool
+ * and bills at another model's rate.
+ */
+const apiOf = (provider, model) => model?.api ?? provider?.api;
+
 /** `provider/id` used by default when config names no model. */
-const DEFAULT_SEARCH_MODEL = "gateway-anthropic/Claude-Sonnet-5.5";
+const DEFAULT_SEARCH_MODEL = "gateway-anthropic/Claude-Sonnet-5-5";
 
 function agentDir() {
   return process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
@@ -81,7 +96,11 @@ function resolveModel() {
   } catch {
     // No settings file: the default model stands.
   }
-  const [wantProvider, wantId] = wanted.split("/");
+  // Model IDs can be namespaced (`vendor/model`), so only the first segment is
+  // the provider.
+  const slash = wanted.indexOf("/");
+  const wantProvider = slash === -1 ? "" : wanted.slice(0, slash);
+  const wantId = slash === -1 ? wanted : wanted.slice(slash + 1);
 
   let modelsJson;
   try {
@@ -103,32 +122,50 @@ function resolveModel() {
       if (resolved) headers[header] = resolved;
     }
     const apiKey = resolveValue(provider.apiKey);
+    const model = (provider.models ?? []).find((entry) => entry.id === id);
     return {
       provider: name,
       id,
-      api: provider.api,
+      api: apiOf(provider, model),
       baseUrl: provider.baseUrl.replace(/\/+$/, ""),
       headers,
       apiKey,
     };
   };
 
-  if (usable(wantProvider) && (providers[wantProvider].models ?? []).some((m) => m.id === wantId)) {
-    return build(wantProvider, wantId);
+  const searchApis = ["anthropic-messages", "openai-responses"];
+  if (usable(wantProvider)) {
+    const model = (providers[wantProvider].models ?? []).find((m) => m.id === wantId);
+    // A configured model is only usable for search if its own api runs a search
+    // tool. Otherwise fall through rather than send it to an API it is not
+    // served on, which the gateway answers from an unpinned pool.
+    if (model && searchApis.includes(apiOf(providers[wantProvider], model))) return build(wantProvider, wantId);
   }
   // Prefer the Anthropic path when nothing is configured: its `web_fetch` reads
   // pages, while the Responses path's `open_page` fails with a DNS error on
   // this gateway (verified), so extract() would have nothing to fall back on.
-  const searchable = Object.keys(providers).filter((name) => {
-    const api = providers[name]?.api;
-    return usable(name) && (api === "anthropic-messages" || api === "openai-responses");
+  const searchable = Object.entries(providers)
+    .filter(([name]) => usable(name))
+    // Only the Anthropic path and the Responses path run a server-side search
+    // tool. Chat Completions has none, so a model served there cannot search.
+    .map(([name, provider]) => [
+      name,
+      (provider.models ?? []).filter((model) => ["anthropic-messages", "openai-responses"].includes(apiOf(provider, model))),
+    ])
+    .filter(([, models]) => models.length > 0);
+  searchable.sort(([a, modelsA], [b, modelsB]) => {
+    const rank = (name, models) =>
+      models.some((m) => apiOf(providers[name], m) === "anthropic-messages") ? 0 : 1;
+    return rank(a, modelsA) - rank(b, modelsB);
   });
-  searchable.sort(
-    (a, b) => Number(providers[b]?.api === "anthropic-messages") - Number(providers[a]?.api === "anthropic-messages"),
-  );
-  for (const name of searchable) {
-    const first = (providers[name].models ?? [])[0];
-    if (first) return build(name, first.id);
+  for (const [name, models] of searchable) {
+    // Whole words only: `mini` matches "Gemini", which is not a cheap model.
+    const preferred =
+      models.find((m) => /\b(haiku|flash-lite|nano|small)\b/i.test(m.id)) ??
+      models.find((m) => /\b(haiku)\b/i.test(m.id)) ??
+      models.find((m) => /\b(mini)\b/i.test(m.id)) ??
+      models[0];
+    if (preferred) return build(name, preferred.id);
   }
   return { error: "no gateway model with a baseUrl in models.json" };
 }
@@ -265,22 +302,26 @@ function writeCache(cache) {
 }
 
 /** Whether the model searches; probes once and caches, never caching a provider error. */
-async function canSearch(model) {
-  const key = `${model.provider}/${model.id}`;
+async function canSearch(model, signal) {
+  // The endpoint and api are part of the identity: the installer moves a
+  // provider's baseUrl in place, and a capability proved against one service
+  // says nothing about the next.
+  const key = `${model.provider}/${model.id}|${model.api}|${model.baseUrl}`;
   const cache = readCache();
   const entry = cache[key];
   if (entry && Date.now() - entry.at < 7 * 24 * 3_600_000) return entry.capable;
   let capable = false;
   try {
     const body = requestBody(model, "", PROBE_PROMPT, false, 400);
-    capable = searched(model.api, await post(model, body, undefined, 60_000));
+    capable = searched(model.api, await post(model, body, signal, 60_000));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    // A gateway outage says nothing about the model; don't cache it.
-    if (!/\b(5\d\d|429|timed out|fetch failed|ENOTFOUND|ECONN)/.test(message)) {
-      cache[key] = { capable: false, at: Date.now(), note: message };
-      writeCache(cache);
-    }
+    // A gateway outage, a rate limit, or a missing/expired credential says
+    // nothing about the model. Caching a 401 would disable search for a week
+    // after the user fixes their key.
+    if (/\b(401|403|5\d\d|429)|timed out|abort|fetch failed|ENOTFOUND|ECONN/i.test(message)) return false;
+    cache[key] = { capable: false, at: Date.now(), note: message };
+    writeCache(cache);
     return false;
   }
   cache[key] = { capable, at: Date.now() };
@@ -323,13 +364,22 @@ export default {
   async search(req) {
     const model = resolveModel();
     if ("error" in model) throw new Error(`gateway search unavailable: ${model.error}`);
-    if (!(await canSearch(model))) {
+    // A cancelled search must not spend a request on the capability probe.
+    if (req.signal?.aborted) throw new Error("search cancelled");
+    if (!(await canSearch(model, req.signal))) {
       throw new Error(
         `${model.provider}/${model.id} does not run the gateway's search tool; set gatewaySearch.model in pi-distro.json to a model that does`,
       );
     }
     const body = requestBody(model, SEARCH_SYSTEM, req.query, false, 1500);
-    const answer = readAnswer(model.api, await post(model, body, req.signal));
+    const reply = await post(model, body, req.signal);
+    const answer = readAnswer(model.api, reply);
+    // The probe proved the model *can* search; this response must actually have
+    // searched. A model that answers from memory would otherwise be reported as
+    // research, with its claims looking sourced and nothing behind them.
+    if (!searched(model.api, reply) && answer.sources.length === 0) {
+      throw new Error(`${model.provider}/${model.id} answered without searching; the result would be unverifiable`);
+    }
     if (!answer.answer) throw new Error("the gateway returned no answer");
     // Return one result per cited source, with the model's answer as the snippet,
     // so the research agent still sees a ranked list it can extract from.
@@ -354,8 +404,11 @@ export default {
     const answer = readAnswer(model.api, await post(model, body, signal));
     // A model whose fetch tool failed still replies in prose ("I couldn't read
     // that page"). Detect it and read the page directly, so research isn't
-    // handed a description of a failure as if it were the page.
-    if (!answer.answer || /couldn.t (read|retrieve|fetch|access)|failed to (fetch|retrieve)|unable to (read|fetch|access)/i.test(answer.answer)) {
+    // handed a description of a failure as if it were the page. Covers can't /
+    // cannot / couldn't / was unable to, which are how models actually say it.
+    const refused =
+      /(can(no|')?t|couldn'?t|unable to|failed to)\s+(read|retrieve|fetch|access|open|load)|I (can'?t|cannot|was unable)/i;
+    if (!answer.answer || refused.test(answer.answer)) {
       return fetchPage(url, signal);
     }
     return {

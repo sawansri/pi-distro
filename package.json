@@ -1,7 +1,7 @@
 {
   "name": "pi-distro",
   "version": "0.1.0",
-  "description": "A pi distro for local models on Strix Halo: small prompt, stable prompt cache, deep research.",
+  "description": "A pi distro for hosted models behind an LLM gateway: cheap subagents, real cost reporting, per-model APIs.",
   "keywords": [
     "pi-package"
   ],
@@ -13,11 +13,16 @@
       "./extensions/subagents.ts",
       "./extensions/lean-prompt.ts",
       "./extensions/cache-guard.ts",
-      "./extensions/inference-stats.ts",
       "./extensions/plan-mode.ts",
+      "./extensions/guard.ts",
       "./extensions/remember.ts",
       "./extensions/handoff.ts",
-      "./extensions/notify.ts"
+      "./extensions/notify.ts",
+      "./extensions/models-refresh.ts",
+      "./extensions/costs.ts",
+      "./extensions/subagent-view.ts",
+      "./extensions/review-context.ts",
+      "./extensions/working-timer.ts"
     ]
   },
   "peerDependencies": {

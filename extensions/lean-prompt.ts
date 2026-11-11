@@ -37,7 +37,7 @@ const MAIN: Line[] = [
   "- For non-trivial or ambiguous tasks, investigate first and plan before editing.",
   "- When a decision is the user's to make, ask instead of guessing.",
   ["todo", "- Track work with 3 or more steps with the todo tool; keep exactly one item in progress."],
-  ["subagent", "- Delegate broad searches and independent subtasks to subagents to keep your context small; run independent ones in parallel."],
+  ["subagent", "- Delegate broad searches and independent subtasks to subagents to keep your context small. Read-only fan-out is safe; before running several agents that can *write*, check the work is genuinely independent (different files), because concurrent writes to one tree clobber each other. Ask for `path:line` and findings, not prose, since you pay for their reports in your own context."],
   ["web_search", "- Search the web for current information or unfamiliar APIs, read the best sources with web_extract, and cite the URLs you used. For in-depth research, load the pi-deep-research skill."],
   "- After changes, verify with tests, a build, or a typecheck. Report failures honestly, with the output.",
   "- Confirm before destructive or irreversible actions such as deleting files, force-pushing, or dropping data.",

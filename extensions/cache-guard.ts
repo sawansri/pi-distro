@@ -46,18 +46,75 @@ interface RawUsage {
   cache_common_prefix_tokens?: number;
 }
 
-const hash = (value: unknown) => createHash("sha1").update(JSON.stringify(value) ?? "").digest("hex");
+/**
+ * A stable digest of one value. Falls back to a marker rather than throwing:
+ * a payload that cannot be serialized is not a payload worth crashing a request
+ * over, and `snapshot` runs inside `before_provider_request`.
+ */
+function hash(value: unknown): string {
+  try {
+    return createHash("sha1").update(JSON.stringify(value) ?? "undefined").digest("hex");
+  } catch {
+    return "unhashable";
+  }
+}
 
-function snapshot(payload: any): Snapshot | undefined {
-  if (!Array.isArray(payload?.messages)) return undefined;
-  const [first, ...rest] = payload.messages;
-  const leadingSystem = first?.role === "system" || first?.role === "developer";
-  return {
-    system: leadingSystem ? hash(first.content) : "",
-    tools: hash(payload.tools ?? []),
-    effort: String(payload.reasoning_effort ?? payload.chat_template_kwargs?.enable_thinking ?? ""),
-    messages: (leadingSystem ? rest : payload.messages).map(hash),
-  };
+/** Whether a list is a conversation: objects with a role. */
+const isTurns = (list: unknown): list is unknown[] =>
+  Array.isArray(list) && list.every((item) => typeof item === "object" && item !== null && "role" in item);
+
+/**
+ * Whether a list is Responses `input`: message items carry a role, and the
+ * others (function calls and their outputs) carry a type instead.
+ */
+const isItems = (list: unknown): list is unknown[] =>
+  Array.isArray(list) &&
+  list.every((item) => typeof item === "object" && item !== null && ("role" in item || "type" in item));
+
+/**
+ * A request reduced to the parts a prompt cache is keyed on.
+ *
+ * Each API names them differently. Chat Completions sends `messages` with a
+ * leading system message; the Responses API sends `instructions` plus an `input`
+ * array of items; Anthropic Messages sends `system` and `messages`. Knowing only
+ * the first made this extension silently do nothing on the Responses path, where
+ * most of this distro's models live.
+ *
+ * A payload of any other shape returns undefined rather than a snapshot: a
+ * guessed shape would report a cache miss on every request from a provider this
+ * guard does not understand. Nothing here throws.
+ */
+export function snapshot(payload: any): Snapshot | undefined {
+  if (typeof payload !== "object" || payload === null) return undefined;
+  const effort = String(
+    payload.reasoning_effort ?? payload.reasoning?.effort ?? payload.chat_template_kwargs?.enable_thinking ?? "",
+  );
+  const tools = hash(payload.tools ?? []);
+  // Anthropic first: it also sends `messages`, so testing that first would read
+  // its top-level `system` as an empty one.
+  if (payload.system !== undefined) {
+    if (!isTurns(payload.messages)) return undefined;
+    return { system: hash(payload.system), tools, effort, messages: payload.messages.map(hash) };
+  }
+  if (isTurns(payload.messages)) {
+    const messages = payload.messages as { role?: string; content?: unknown }[];
+    const leadingSystem = ["system", "developer"].includes(messages[0]?.role ?? "");
+    const rest = leadingSystem ? messages.slice(1) : messages;
+    return { system: leadingSystem ? hash(messages[0].content) : "", tools, effort, messages: rest.map(hash) };
+  }
+  if (typeof payload.instructions === "string" || payload.input !== undefined) {
+    if (typeof payload.input === "string") {
+      return { system: hash(payload.instructions ?? ""), tools, effort, messages: [hash({ role: "user", content: payload.input })] };
+    }
+    if (!isItems(payload.input)) return undefined;
+    // A leading developer/system item is the system prompt, as in chat form.
+    const items = payload.input as { role?: string }[];
+    const leadingSystem = ["system", "developer"].includes(items[0]?.role ?? "");
+    const rest = leadingSystem ? items.slice(1) : items;
+    const system = hash(payload.instructions ?? "") + (leadingSystem ? hash(items[0]) : "");
+    return { system, tools, effort, messages: rest.map(hash) };
+  }
+  return undefined;
 }
 
 /** Tokens of the previous prompt this request could have reused but processed again. */
@@ -132,9 +189,12 @@ export default function (pi: ExtensionAPI) {
       pending = undefined;
       return;
     }
-    const normalized = (event.message as { usage?: { input?: number; cacheRead?: number } }).usage;
+    const normalized = (event.message as { usage?: { input?: number; cacheRead?: number; cacheWrite?: number } }).usage;
     const cached = usage?.prompt_tokens_details?.cached_tokens ?? usage?.cached_tokens ?? normalized?.cacheRead ?? 0;
-    const prompt = usage?.prompt_tokens ?? (normalized?.input ?? 0) + cached;
+    // Cache writes are part of the prompt too. Anthropic reports them outside
+    // `input`, so leaving them out understates the prompt after a cache loss and
+    // the miss then falls under the warning threshold.
+    const prompt = usage?.prompt_tokens ?? (normalized?.input ?? 0) + cached + (normalized?.cacheWrite ?? 0);
     const missed = missedTokens(prompt, cached, previousPrompt);
     const serverReason = usage?.gufo?.cache_miss_reason ?? usage?.cache_miss_reason;
     const isFirst = previousPrompt === undefined;
