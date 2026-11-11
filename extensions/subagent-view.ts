@@ -75,12 +75,15 @@ export function renderRows(rows: TaskRow[], now = Date.now()): string[] {
   const running = rows.filter((r) => r.status === "running").length;
   const header = running > 0 ? `subagents  ${rows.length - running}/${rows.length} done` : `subagents  ${rows.length} done`;
   const lines = [header];
+  // Fixed columns so the eye can scan one field at a time: the agent, then the
+  // model, then the task. Padding the model only when present ragged the rows.
+  const agentWidth = Math.max(...rows.map((r) => r.agent.length), 6);
+  const modelWidth = Math.max(...rows.map((r) => (r.model ?? "").length), 0);
   for (const row of rows) {
     const icon = row.status === "ok" ? "+" : row.status === "failed" ? "x" : "·";
     const elapsed = seconds((row.endedAt ?? now) - row.startedAt);
-    const model = row.model ? ` ${row.model}` : "";
-    // The agent name is what you scan for; the task is the context.
-    lines.push(`  ${icon} ${row.agent.padEnd(12)}${model.padEnd(0)} ${firstLine(row.task, 44)} (${elapsed})`);
+    const model = modelWidth > 0 ? `${(row.model ?? "").padEnd(modelWidth)} ` : "";
+    lines.push(`  ${icon} ${row.agent.padEnd(agentWidth)}  ${model}${firstLine(row.task, 44)} (${elapsed})`);
   }
   return lines;
 }

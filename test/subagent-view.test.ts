@@ -82,3 +82,16 @@ test("an update with no results leaves the rows untouched", () => {
   assert.deepEqual(applyResults(rows, undefined), rows);
   assert.deepEqual(applyResults(rows, []), rows);
 });
+
+test("rows line up in fixed columns, so the eye can scan one field at a time", () => {
+  let rows = rowsFromArgs([
+    { agent: "explore", task: "a" },
+    { agent: "researcher", task: "b" },
+  ]);
+  rows = applyResults(rows, [{ agent: "explore", task: "a", exitCode: 0, model: "DeepSeek-V4.1-Flash" }], 1000);
+  const lines = renderRows(rows, 2000);
+  // The task text must start at the same column whether or not a model is shown.
+  const taskColumn = (line: string) => line.indexOf(line.trim().split(/\s+/).slice(-1)[0].slice(0, 1));
+  assert.equal(lines[1].indexOf("(2s)"), lines[2].indexOf("(2s)"));
+  assert.ok(taskColumn(lines[1]) >= 0);
+});
