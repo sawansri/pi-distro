@@ -63,7 +63,17 @@ function isReadOnlyStage(stage: Stage): boolean {
   const { name, args } = stage;
   if (name === undefined) return true;
   if (name === "git") {
-    const [sub, ...rest] = args;
+    // The neutralising overrides are ours, not the model's: skip them before
+    // judging the subcommand, so a permitted read stays permitted.
+    const stripped: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === "-c" && /^(diff\.external|core\.fsmonitor|core\.sshCommand)=$/.test(args[i + 1] ?? "")) {
+        i += 1;
+        continue;
+      }
+      stripped.push(args[i]);
+    }
+    const [sub, ...rest] = stripped;
     const allowed = sub !== undefined ? GIT[sub] : undefined;
     return allowed !== undefined && rest.every((arg) => allowed.test(arg));
   }
@@ -71,6 +81,54 @@ function isReadOnlyStage(stage: Stage): boolean {
   if (!(name in READERS)) return false;
   const denied = READERS[name];
   return denied === null || !args.some((arg) => denied.test(arg));
+}
+
+/**
+ * Flags that stop a repository's own config from running a program.
+ *
+ * `.git/config` and `.gitattributes` come with the clone, not from the command,
+ * so `git log -p` on a repo you did not author can execute a `diff.external`,
+ * a `core.fsmonitor` hook, or a `diff.<driver>.textconv` named in
+ * `.gitattributes`. Verified on git 2.43: with all three configured, `log -p`,
+ * `show`, `blame`, `status` and `diff` each ran the payload.
+ *
+ * Neutralising them costs nothing and is invisible in the output, so it is
+ * applied to every git command plan mode allows rather than only the ones known
+ * to be vulnerable.
+ */
+export const GIT_NEUTRALIZE = ["-c", "diff.external=", "-c", "core.fsmonitor=", "-c", "core.sshCommand="];
+
+/** Add the neutralising overrides to a git invocation, along with --no-textconv. */
+export function neutralizeGit(args: string[]): string[] {
+  // `--no-textconv` is a subcommand flag, so it goes after the subcommand and
+  // before the user's arguments; `-c` overrides go before everything.
+  const [sub, ...rest] = args;
+  if (sub === undefined) return [...GIT_NEUTRALIZE];
+  const takesTextconv = ["log", "show", "diff", "blame", "grep", "shortlog"].includes(sub);
+  const extra = takesTextconv && !rest.includes("--no-textconv") ? ["--no-textconv"] : [];
+  return [...GIT_NEUTRALIZE, sub, ...extra, ...rest];
+}
+
+/**
+ * Rewrite every `git` stage in a command so the repository's config cannot make
+ * it run a program, leaving everything else untouched.
+ *
+ * Only whole words named `git` are considered, so `gitk` and `echo git` are not
+ * rewritten; the stage splitter has already handled quoting.
+ */
+export function hardenGit(command: string): string {
+  const parts = stages(command);
+  if (!parts) return command;
+  let out = command;
+  // Right to left, so earlier offsets stay valid.
+  for (const stage of [...parts].reverse()) {
+    if (stage.name !== "git") continue;
+    const at = out.lastIndexOf(stage.text);
+    if (at === -1) continue;
+    const safe = ["git", ...neutralizeGit(stage.args)].join(" ");
+    out = out.slice(0, at) + safe + out.slice(at + stage.text.length);
+  }
+  return out;
 }
 
 /** Whether a bash command only reads: every stage is a reader, and nothing writes to a file or runs a substitution. */
@@ -157,6 +215,12 @@ export default function (pi: ExtensionAPI) {
           reason: "Plan mode is on: bash runs only read-only commands (ls, cat, grep, rg, find, git status/log/diff/show, ...), without redirection.",
         };
       }
+      // Approving a command is not enough: the repository's own config can make
+      // an approved read run a program. Rewrite every git invocation to
+      // neutralise that, which plan mode can do because `tool_call` may mutate
+      // the input.
+      const hardened = hardenGit(command);
+      if (hardened !== command) (event.input as { command: string }).command = hardened;
     }
   });
 

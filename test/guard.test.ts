@@ -133,3 +133,25 @@ test("the sandbox launcher never grants read access to ~/.ssh", () => {
     assert.doesNotMatch(line, /\.ssh/, `launcher grants ~/.ssh: ${line.trim()}`);
   }
 });
+
+test("setting a git config key that runs a program is blocked", () => {
+  // These come from .git/config, not from the command, so a permitted read like
+  // `git log -p` executes them. Verified on git 2.43: with diff.external,
+  // core.fsmonitor and a textconv driver all configured, log -p, show, blame,
+  // status and diff each ran the payload.
+  assert.ok(blocked("git config diff.external /tmp/x"));
+  assert.ok(blocked("git config core.fsmonitor /tmp/x"));
+  assert.ok(blocked("git config diff.mydrv.textconv /tmp/x"));
+  assert.ok(blocked("git config --global core.pager /tmp/x"));
+  assert.ok(blocked("git config --local core.sshCommand /tmp/x"));
+  // Ordinary config is fine.
+  assert.ok(allowed("git config user.name me"));
+  assert.ok(allowed("git config --get user.email"));
+});
+
+test("a diff driver or hook written straight into the files is blocked", () => {
+  // The same bypass without `git config`.
+  assert.ok(checkWrite(".gitattributes") !== undefined);
+  assert.ok(checkWrite("sub/.gitattributes") !== undefined);
+  assert.ok(blocked("echo '*.txt diff=x' > .gitattributes"));
+});

@@ -210,6 +210,66 @@ function innerCommand(stage: Stage): string | undefined {
   return undefined;
 }
 
+/**
+ * git config keys that make a read-only command run a program.
+ *
+ * `diff.external` replaces git's diff engine, `core.fsmonitor` runs on every
+ * status, and a `diff.<driver>.textconv` named in `.gitattributes` runs whenever
+ * that path is diffed. All three come from the repository, not from the command,
+ * so `git log -p` is arbitrary code execution on a repository you did not
+ * author — which is exactly what plan mode is supposed to prevent. Verified on
+ * git 2.43: with all three set, `log -p`, `show`, `blame`, `status` and `diff`
+ * each executed the payload.
+ */
+const GIT_CODE_KEYS = [
+  /^diff\.external$/,
+  /^diff\.[^.]+\.textconv$/,
+  /^core\.fsmonitor$/,
+  /^core\.sshCommand$/,
+  /^core\.pager$/,
+  /^core\.editor$/,
+  /^core\.hookspath$/,
+  /^sequence\.editor$/,
+  /^credential\.helper$/,
+  /^filter\.[^.]+\.(clean|smudge|process)$/,
+  /^merge\.[^.]+\.driver$/,
+  /^gpg\.program$/,
+  /^init\.templateDir$/,
+  /^include\.path$/,
+  /^includeIf\..*\.path$/,
+];
+
+export const isCodeExecutionKey = (key: string): boolean => GIT_CODE_KEYS.some((re) => re.test(key));
+
+/** `git config <key> <value>`, `git config --global <key>`, `git -c key=value`, `[diff "x"] textconv =` forms. */
+function denyGitConfig(stage: Stage): Denial | undefined {
+  const { name, args } = stage;
+  if (name === "git") {
+    const [sub, ...rest] = args.filter((a) => !/^-(c|C)$/.test(a) || true);
+    if (sub === "config") {
+      const words = rest.filter((a) => !a.startsWith("-"));
+      const key = words[0] ?? "";
+      if (isCodeExecutionKey(key)) {
+        return { reason: `sets ${key} in git config, which makes a later git command run a program` };
+      }
+    }
+    // `git -c key=value`: the guard already refuses every `-c`, but name the
+    // specific danger when it is one, so the message is useful.
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] !== "-c") continue;
+      const key = String(args[i + 1] ?? "").split("=")[0];
+      if (isCodeExecutionKey(key)) {
+        return { reason: `overrides ${key}, which makes git run a program` };
+      }
+    }
+  }
+  // Writing the file directly, which is how these get set without `git config`.
+  if (name === "echo" || name === "printf" || name === "cat" || name === "tee") {
+    if (args.some((a) => /\.gitattributes$/.test(a))) return { reason: "writes .gitattributes, which can run a diff driver" };
+  }
+  return undefined;
+}
+
 /** The denial for one shell command, or undefined when nothing irreversible is in it. */
 export function checkCommand(command: string, cwd: string): Denial | undefined {
   const parts = stages(command);
@@ -222,7 +282,8 @@ export function checkCommand(command: string, cwd: string): Denial | undefined {
       (stage.name === "rm" || stage.name === "unlink" || stage.name === "rmdir" ? denyRm(stage, cwd) : undefined) ??
       (stage.name === "git" ? denyGit(stage) : undefined) ??
       denyFilesystem(stage, cwd) ??
-      denyProtectedWrite(stage);
+      denyProtectedWrite(stage) ??
+      denyGitConfig(stage);
     if (denial) return denial;
     // `xargs rm -rf /` and `sh -c "rm -rf /"` carry the real command inside.
     const inner = innerCommand(stage);
@@ -238,6 +299,9 @@ export function checkCommand(command: string, cwd: string): Denial | undefined {
 
 /** The denial for a write/edit tool call, or undefined. */
 export function checkWrite(target: string): Denial | undefined {
+  if (/(^|\/)\.gitattributes$/.test(target)) {
+    return { reason: "writes .gitattributes, which can name a diff driver that runs a program" };
+  }
   if (/(^|\/)\.git\/(hooks|config)(\/|$)/.test(target)) {
     return { reason: "writes into .git, where hooks and config run commands on your behalf" };
   }
