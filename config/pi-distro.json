@@ -1,1 +1,6 @@
-{ "disabledTools": ["lsp_*"], "subagentConcurrency": 2 }
+{
+  "disabledTools": [
+    "lsp_*"
+  ],
+  "subagentConcurrency": 4
+}

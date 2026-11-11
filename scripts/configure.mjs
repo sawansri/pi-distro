@@ -2,7 +2,7 @@
 // after the packages are installed:
 //
 //   node scripts/configure.mjs --agent-dir <dir> --package-dir <dir>
-//        [--gufo <url>] [--searxng <url>] [--sessions <n>]
+//        [--gateway <url>] [--anthropic <url>] [--concurrency <n>]
 //
 // Files are only created where none exist. Edits to existing files are
 // targeted merges that leave the user's other settings alone.
@@ -17,17 +17,21 @@ const { values: args } = parseArgs({
   options: {
     "agent-dir": { type: "string" },
     "package-dir": { type: "string" },
-    gufo: { type: "string" },
-    searxng: { type: "string" },
+    gateway: { type: "string" },
+    anthropic: { type: "string" },
+    concurrency: { type: "string" },
     sessions: { type: "string" },
   },
 });
-const DEFAULT_GUFO = "http://127.0.0.1:8080/v1";
 const agentDir = args["agent-dir"];
 const packageDir = args["package-dir"];
-const sessions = args.sessions === undefined ? undefined : Number(args.sessions);
-if (!agentDir || !packageDir || (sessions !== undefined && !(Number.isInteger(sessions) && sessions >= 1))) {
-  console.error("usage: node configure.mjs --agent-dir <dir> --package-dir <dir> [--gufo <url>] [--searxng <url>] [--sessions <n>]");
+// --sessions is the local branch's name for the same setting; keep accepting it.
+const rawConcurrency = args.concurrency ?? args.sessions;
+const concurrency = rawConcurrency === undefined ? undefined : Number(rawConcurrency);
+if (!agentDir || !packageDir || (concurrency !== undefined && !(Number.isInteger(concurrency) && concurrency >= 1))) {
+  console.error(
+    "usage: node configure.mjs --agent-dir <dir> --package-dir <dir> [--gateway <url>] [--anthropic <url>] [--concurrency <n>]",
+  );
   process.exit(1);
 }
 const here = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -79,15 +83,16 @@ bindThinkingCycle();
 await configureModels();
 configureSettings();
 await configureResearch();
+configureSearchModel();
 
-/** pi-distro.json, with the subagent concurrency from --sessions. */
+/** pi-distro.json, with the subagent concurrency from --concurrency. */
 function configureDistro() {
   const file = target("pi-distro.json");
   const current = mergeTarget(file);
   if (!current) return;
   const defaults = readJson(config("pi-distro.json")).value;
   const next = { ...defaults, ...current };
-  if (sessions !== undefined) next.subagentConcurrency = sessions;
+  if (concurrency !== undefined) next.subagentConcurrency = concurrency;
   writeJson(file, next);
   console.log(`  wrote ${file}: ${next.subagentConcurrency} parallel subagents`);
 }
@@ -101,53 +106,66 @@ function bindThinkingCycle() {
   console.log(`  wrote ${file}: thinking level cycles with alt+t`);
 }
 
-/** Adds a gufo provider to models.json from the server's /models, or from the template when it's down. */
+/** Adds the gateway providers to models.json, seeded from the template. */
 async function configureModels() {
   const file = target("models.json");
   const current = mergeTarget(file);
   if (!current) return;
   current.providers ??= {};
-  const baseUrl = (args.gufo ?? DEFAULT_GUFO).replace(/\/+$/, "");
-  const existing = current.providers.gufo;
-  if (existing && !(args.gufo && existing.baseUrl !== baseUrl)) {
-    console.log(`  kept the gufo provider in ${file}`);
-    return;
-  }
-  const template = readJson(config("models.template.json")).value.providers.gufo;
-  const models = await servedModels(baseUrl, template.models[0]);
-  if (existing) {
-    // Moved with --gufo: the new server may serve other models, and gufo rejects unknown IDs.
-    existing.baseUrl = baseUrl;
-    if (models) existing.models = models;
-    console.log(`  gufo provider moved to ${baseUrl}`);
-  } else {
-    current.providers.gufo = { ...template, baseUrl, ...(models && { models }) };
-  }
-  if (!models) {
-    const kept = existing ? "kept the model list" : "added its usual models";
-    console.warn(`  couldn't reach gufo at ${baseUrl}; ${kept}. Edit ${file} if the IDs differ.`);
+  const template = readJson(config("models.template.json")).value.providers ?? {};
+  const overrides = { gateway: args.gateway, "gateway-anthropic": args.anthropic };
+  let added = 0;
+  for (const [name, spec] of Object.entries(template)) {
+    const existing = current.providers[name];
+    const baseUrl = (overrides[name] ?? existing?.baseUrl ?? spec.baseUrl).replace(/\/+$/, "");
+    if (!existing) {
+      // Reuse a provider the user already has for the same endpoint and API
+      // instead of adding a second name for one service (amd-gateway, say).
+      const real = (url) => typeof url === "string" && /^https?:/.test(url) && !/example\.(com|org|net)/.test(url);
+      const twin =
+        Object.entries(current.providers).find(
+          ([, provider]) =>
+            provider?.api === spec.api &&
+            String(provider?.baseUrl ?? "").replace(/\/+$/, "") === baseUrl &&
+            (provider.models ?? []).length > 0,
+        ) ??
+        // Otherwise any real provider speaking the same API already is the gateway.
+        Object.entries(current.providers).find(
+          ([, provider]) => provider?.api === spec.api && real(provider?.baseUrl) && (provider.models ?? []).length > 0,
+        );
+      if (twin) {
+        console.log(`  ${name}: using the existing ${twin[0]} provider for ${baseUrl}`);
+        continue;
+      }
+      // The template carries a placeholder URL, which is not a gateway. Adding
+      // it would leave a provider that always fails; only add a real one.
+      if (!overrides[name] && /example\.(com|org|net)$/.test(baseUrl.replace(/\/.*$/, ""))) {
+        console.log(`  ${name}: no gateway URL given, not adding a placeholder provider`);
+        continue;
+      }
+    }
+    if (existing) {
+      // --gateway / --anthropic move a provider; its model list is the user's.
+      if (overrides[name] && existing.baseUrl !== baseUrl) {
+        existing.baseUrl = baseUrl;
+        console.log(`  ${name} moved to ${baseUrl}`);
+      } else {
+        console.log(`  kept the ${name} provider in ${file}`);
+      }
+      continue;
+    }
+    current.providers[name] = { ...spec, baseUrl };
+    added += 1;
+    console.log(`  added ${name} at ${baseUrl}`);
   }
   writeJson(file, current);
-  console.log(`  wrote ${file}: gufo provider at ${baseUrl}`);
-}
-
-/** Model entries for what the server lists at /models, or undefined when it can't be reached. */
-async function servedModels(baseUrl, base) {
-  try {
-    const response = await fetch(`${baseUrl}/models`, { signal: AbortSignal.timeout(5000) });
-    const served = (await response.json()).data ?? [];
-    if (served.length === 0) return undefined;
-    console.log(`  found ${served.map((m) => m.id).join(", ")} on ${baseUrl}`);
-    return served.map((m) => ({
-      ...base,
-      id: m.id,
-      name: `${m.id} (gufo)`,
-      input: m.architecture?.input_modalities?.includes("image") ? ["text", "image"] : ["text"],
-      contextWindow: m.context_length ?? base.contextWindow,
-    }));
-  } catch {
-    return undefined;
+  const key = process.env.LLM_GATEWAY_KEY;
+  if (!key && added > 0) {
+    console.warn(
+      `  ${file} reads $LLM_GATEWAY_KEY; export it (and any other key ${file} names) or the gateway returns 401`,
+    );
   }
+  console.log(`  wrote ${file}`);
 }
 
 /** A local package source resolved as pi does: ~ is the home directory, file:// URLs are paths. */
@@ -164,12 +182,20 @@ function configureSettings() {
   const file = target("settings.json");
   const settings = mergeTarget(file);
   if (!settings) return;
-  const models = readJson(target("models.json")).value?.providers?.gufo?.models ?? [];
-  const servesDefault = models.some((m) => m.id === settings.defaultModel);
-  if (models.length > 0 && (!settings.defaultProvider || (settings.defaultProvider === "gufo" && !servesDefault))) {
-    settings.defaultProvider = "gufo";
-    settings.defaultModel = models[0].id;
-    console.log(`  default model: gufo/${models[0].id}`);
+  // Only set a default when the user has none that still resolves. Prefer a
+  // provider whose api can search, since web search is the point of this branch.
+  const providers = readJson(target("models.json")).value?.providers ?? {};
+  const withModels = Object.entries(providers).filter(([, provider]) => (provider?.models ?? []).length > 0);
+  const searchable = withModels.filter(([, provider]) => ["anthropic-messages", "openai-responses"].includes(provider.api));
+  const known = (name, id) => (providers[name]?.models ?? []).some((model) => model.id === id);
+  const currentKnown = settings.defaultProvider ? known(settings.defaultProvider, settings.defaultModel) : false;
+  const [name, provider] = (searchable.length > 0 ? searchable : withModels)[0] ?? [];
+  if (name && !currentKnown) {
+    settings.defaultProvider = name;
+    settings.defaultModel = provider.models[0].id;
+    console.log(`  default model: ${name}/${settings.defaultModel}`);
+  } else if (settings.defaultProvider) {
+    console.log(`  kept the default model: ${settings.defaultProvider}/${settings.defaultModel ?? ""}`);
   }
   settings.compaction ??= {};
   settings.compaction.keepRecentTokens ??= 12000;
@@ -235,7 +261,34 @@ function languageServers() {
   return servers;
 }
 
-/** Search providers for pi-deep-research, its provider chain, and the SearXNG URL. */
+/** The gateway search provider for pi-deep-research, and its provider chain. */
+/** Point the gateway search provider at a model this install actually has. */
+function configureSearchModel() {
+  const file = target("pi-distro.json");
+  const settings = mergeTarget(file);
+  if (!settings) return;
+  const providers = readJson(target("models.json")).value?.providers ?? {};
+  const rank = (provider) => (provider?.api === "anthropic-messages" ? 0 : provider?.api === "openai-responses" ? 1 : 9);
+  const candidates = Object.entries(providers)
+    .filter(([, provider]) => (provider?.models ?? []).length > 0 && rank(provider) < 9)
+    .sort((a, b) => rank(a[1]) - rank(b[1]));
+  const [name, provider] = candidates[0] ?? [];
+  if (!name) {
+    console.warn("  no gateway provider found; web search and /research will have no backend");
+    return;
+  }
+  // Haiku/Sonnet before Opus: searching is a cheap, high-volume call.
+  const models = provider.models.map((model) => model.id);
+  const chosen =
+    models.find((id) => /haiku|flash|mini|small/i.test(id)) ??
+    models.find((id) => /sonnet/i.test(id)) ??
+    models[0];
+  settings.gatewaySearch ??= {};
+  settings.gatewaySearch.model = `${name}/${chosen}`;
+  writeJson(file, settings);
+  console.log(`  search model: ${name}/${chosen}`);
+}
+
 async function configureResearch() {
   for (const provider of fs.readdirSync(path.join(here, "providers")).filter((f) => f.endsWith(".ts"))) {
     fs.mkdirSync(path.join(researchDir, "providers"), { recursive: true });
@@ -244,22 +297,8 @@ async function configureResearch() {
   console.log(`  wrote search providers to ${path.join(researchDir, "providers")}`);
   seed(config("deep-research.json"), path.join(researchDir, "config.json"));
   const chain = readJson(path.join(researchDir, "config.json")).value?.providers;
-  if (Array.isArray(chain) && !chain.includes("exa-mcp") && !chain.includes("searxng")) {
-    console.warn(`  ${path.join(researchDir, "config.json")} uses neither searxng nor exa-mcp; add them to "providers" to use them`);
+  if (Array.isArray(chain) && !chain.includes("gateway")) {
+    console.warn(`  ${path.join(researchDir, "config.json")} has no "gateway" in "providers"; /research will not use the gateway`);
   }
-  if (!args.searxng) return;
-
-  const baseUrl = args.searxng.replace(/\/+$/, "");
-  writeJson(path.join(researchDir, "searxng.json"), { baseUrl });
-  console.log(`  wrote ${path.join(researchDir, "searxng.json")}: ${baseUrl}`);
-  try {
-    const response = await fetch(`${baseUrl}/search?q=test&format=json`, { signal: AbortSignal.timeout(15000) });
-    if (response.status === 403) {
-      console.warn("  SearXNG refused JSON (403): add json to search.formats in its settings.yml");
-    } else if (!response.ok) {
-      console.warn(`  SearXNG answered ${response.status} to a test search`);
-    }
-  } catch (error) {
-    console.warn(`  couldn't reach SearXNG at ${baseUrl}: ${error.message}`);
-  }
+  return;
 }

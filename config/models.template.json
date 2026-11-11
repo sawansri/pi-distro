@@ -1,36 +1,130 @@
 {
   "$schema": "https://pi.dev/schemas/models.schema.json",
   "providers": {
-    "gufo": {
-      "name": "gufo",
-      "baseUrl": "http://127.0.0.1:8080/v1",
-      "api": "openai-completions",
-      "apiKey": "gufo",
-      "compat": {
-        "thinkingFormat": "openai",
-        "supportsReasoningEffort": true,
-        "supportsMidConvoSystemMessages": false
+    "gateway-anthropic": {
+      "name": "LLM Gateway (Anthropic)",
+      "baseUrl": "https://llm-api.example.com/Unified",
+      "api": "anthropic-messages",
+      "apiKey": "$LLM_GATEWAY_KEY",
+      "authHeader": true,
+      "headers": {
+        "Ocp-Apim-Subscription-Key": "$LLM_GATEWAY_KEY",
+        "anthropic-version": "2023-06-01"
       },
       "models": [
         {
-          "id": "qwen3.8-flash-next",
-          "name": "Qwen 3.8 Flash Next (gufo)",
+          "id": "Claude-Opus-5.5",
+          "name": "Claude Opus 5.5",
           "reasoning": true,
-          "thinkingLevelMap": { "off": "none", "minimal": "minimal", "low": "low", "medium": "medium", "high": "high" },
-          "input": ["text", "image"],
-          "contextWindow": 262144,
-          "maxTokens": 32768,
-          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 1000000,
+          "maxTokens": 128000,
+          "cost": {
+            "input": 15,
+            "output": 75,
+            "cacheRead": 1.5,
+            "cacheWrite": 18.75
+          },
+          "promptCache": {
+            "short": 300,
+            "long": 3600
+          }
         },
         {
-          "id": "qwen3.8-27b",
-          "name": "Qwen 3.8 27B (gufo)",
+          "id": "Claude-Sonnet-5.5",
+          "name": "Claude Sonnet 5.5",
           "reasoning": true,
-          "thinkingLevelMap": { "off": "none", "minimal": "minimal", "low": "low", "medium": "medium", "high": "high" },
-          "input": ["text", "image"],
-          "contextWindow": 262144,
-          "maxTokens": 32768,
-          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 1000000,
+          "maxTokens": 128000,
+          "cost": {
+            "input": 3,
+            "output": 15,
+            "cacheRead": 0.3,
+            "cacheWrite": 3.75
+          },
+          "promptCache": {
+            "short": 300,
+            "long": 3600
+          }
+        },
+        {
+          "id": "Claude-Haiku-5.5",
+          "name": "Claude Haiku 5.5",
+          "reasoning": false,
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 1000000,
+          "maxTokens": 128000,
+          "cost": {
+            "input": 0.8,
+            "output": 4,
+            "cacheRead": 0.08,
+            "cacheWrite": 1
+          },
+          "promptCache": {
+            "short": 300
+          }
+        }
+      ]
+    },
+    "gateway": {
+      "name": "LLM Gateway",
+      "baseUrl": "https://llm-api.example.com/Unified/v1",
+      "api": "openai-responses",
+      "apiKey": "$LLM_GATEWAY_KEY",
+      "authHeader": true,
+      "headers": {
+        "Ocp-Apim-Subscription-Key": "$LLM_GATEWAY_KEY"
+      },
+      "models": [
+        {
+          "id": "gpt-6.1-sol",
+          "name": "GPT-6.1 Sol",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 1050000,
+          "maxTokens": 128000,
+          "cost": {
+            "input": 1.25,
+            "output": 10,
+            "cacheRead": 0.125,
+            "cacheWrite": 1.25
+          },
+          "promptCache": {
+            "short": 300
+          }
+        },
+        {
+          "id": "gpt-6-luna",
+          "name": "GPT-6 Luna",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 1050000,
+          "maxTokens": 128000,
+          "cost": {
+            "input": 0.25,
+            "output": 2,
+            "cacheRead": 0.025,
+            "cacheWrite": 0.25
+          },
+          "promptCache": {
+            "short": 300
+          }
         }
       ]
     }

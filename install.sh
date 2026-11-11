@@ -2,10 +2,13 @@
 # Install pi-distro on Linux or macOS.
 #
 #   ./install.sh                                 # global: ~/.pi/agent (or $PI_CODING_AGENT_DIR)
-#   ./install.sh --searxng http://localhost:8888 # use a local SearXNG for web search
-#   ./install.sh --gufo http://127.0.0.1:8080/v1 --sessions 4
-#   ./install.sh --dir ~/.pi/pi-distro-test      # self-contained dir, leaves your global setup alone
 #   ./install.sh --dev                           # load extensions from this clone, for working on them
+#   ./install.sh --gateway https://gw.example.com/Unified/v1 --concurrency 6
+#   ./install.sh --dir ~/.pi/pi-distro-gateway   # self-contained dir, leaves your global setup alone
+#
+# Web search and /research go through the gateway's own search tool, using the
+# same key as the chat models: export LLM_GATEWAY_KEY before starting pi, or
+# name another variable in models.json.
 #
 # Installs pi with its official installer when it is missing, then the pinned
 # packages in config/packages.txt and this distro, then its configuration (see
@@ -14,12 +17,12 @@
 set -eu
 
 usage() {
-  echo "Usage: $0 [--dir <path>] [--gufo <url>] [--searxng <url>] [--sessions <n>] [--dev]"
-  echo "  --dir <path>      install into a self-contained pi agent directory instead of ~/.pi/agent"
-  echo "  --gufo <url>      gufo's OpenAI-compatible URL (default http://127.0.0.1:8080/v1)"
-  echo "  --searxng <url>   your SearXNG instance, tried first for web search"
-  echo "  --sessions <n>    gufo's --sessions: how many subagents run at once (default 2)"
-  echo "  --dev             load extensions from this clone instead of a copy"
+  echo "Usage: $0 [--dir <path>] [--gateway <url>] [--anthropic <url>] [--concurrency <n>] [--dev]"
+  echo "  --dir <path>       install into a self-contained pi agent directory instead of ~/.pi/agent"
+  echo "  --gateway <url>    the gateway's OpenAI-compatible (Responses) URL, \`.../v1\`"
+  echo "  --anthropic <url>  the gateway's Anthropic-compatible URL for the same service"
+  echo "  --concurrency <n>   how many subagent tasks run at once (default 4)"
+  echo "  --dev              load extensions from this clone instead of a copy"
 }
 
 own_dir=
@@ -35,7 +38,7 @@ while [ $# -gt 0 ]; do
       own_dir=1
       shift 2
       ;;
-    --gufo | --searxng | --sessions)
+    --gateway | --anthropic | --concurrency | --sessions)
       [ $# -ge 2 ] || { usage >&2; exit 1; }
       configure_args="$configure_args $1 $2"
       shift 2
@@ -105,6 +108,10 @@ say "Configuring"
 # shellcheck disable=SC2086 # configure_args holds flag/value pairs without spaces.
 "$node" "$here/scripts/configure.mjs" --agent-dir "$agent_dir" --package-dir "$package_dir" $configure_args
 
+if [ -z "${LLM_GATEWAY_KEY:-}" ]; then
+  echo "  Note: export LLM_GATEWAY_KEY before starting pi; models.json reads it." >&2
+fi
+
 if [ "$agent_dir" = "$HOME/.pi/agent" ]; then
   say "Done. Start pi with:  pi"
 else
@@ -113,9 +120,8 @@ fi
 cat <<'EOF'
 
   shift+tab, /plan    plan mode: read-only until you approve the plan
-  alt+t               thinking level (set it before you start; changing it
-                      mid-session makes gufo reprocess the conversation)
-  /research <topic>   deep research with sources
+  alt+t               thinking level
+  /research <topic>   deep research, searching through the gateway
   /remember <note>    keep a note for future sessions (-g: every project)
   /handoff [focus]    continue in a fresh session from a summary
   /undo, /redo        revert or restore the last turn's file changes

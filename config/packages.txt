@@ -1,4 +1,9 @@
 # Upstream pi packages, pinned to the versions this distro was tested with.
+#
+# gateway branch: pi-deep-research stays, and searches through the gateway via
+# providers/gateway.ts (installed into its providers directory). Its own
+# `web_search` and `web_extract` are the only ones registered, so /research and
+# the researcher subagent both go through the gateway.
 npm:pi-deep-research@0.4.1
 npm:pi-lite-subagent@0.3.0
 npm:pi-todo-lite@0.3.0
