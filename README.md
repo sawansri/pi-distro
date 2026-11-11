@@ -125,7 +125,7 @@ rewrites its own lines on the next run and leaves lines you typed alone.
 | Cache hit rate and miss warnings | `extensions/cache-guard.ts` | footer; warns with the cause |
 | Refresh the model list | `extensions/models-refresh.ts` | `/models-refresh [--prune]` |
 | Spend by model and subagent | `extensions/costs.ts` | `/costs` |
-| Live subagent panel | `extensions/subagent-view.ts` | `/subagents`; fills in during a fan-out |
+| Live subagent panel | `extensions/subagent-view.ts` | appears during a fan-out; `/subagents` pins it, `/subagents open <n>` inspects one |
 | Destructive-command guard | `extensions/guard.ts` | always on; `PI_DISTRO_GUARD=off` to disable |
 | Reviewer gets the diff | `extensions/review-context.ts` | automatic when a reviewer is dispatched |
 | Notes across sessions | `extensions/remember.ts` | `/remember <note>`, `-g` for all projects |

@@ -3,8 +3,11 @@
 //   node --test test/subagent-view.test.ts
 
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { test } from "node:test";
-import { applyResults, renderRows, rowsFromArgs } from "../extensions/subagent-view.ts";
+import { applyResults, childSessionDir, newestSessionFile, panelVisible, renderRows, rowAtLine, rowsFromArgs } from "../extensions/subagent-view.ts";
 
 const tasks = [
   { agent: "explore", task: "find the allowlist" },
@@ -94,4 +97,57 @@ test("rows line up in fixed columns, so the eye can scan one field at a time", (
   const taskColumn = (line: string) => line.indexOf(line.trim().split(/\s+/).slice(-1)[0].slice(0, 1));
   assert.equal(lines[1].indexOf("(2s)"), lines[2].indexOf("(2s)"));
   assert.ok(taskColumn(lines[1]) >= 0);
+});
+
+test("a click maps to its row, and misses land on nothing", () => {
+  // Line 0 is the header, so row i is drawn at y = i + 1.
+  assert.equal(rowAtLine(0, 3), -1, "the header is not a row");
+  assert.equal(rowAtLine(1, 3), 0);
+  assert.equal(rowAtLine(3, 3), 2);
+  assert.equal(rowAtLine(4, 3), -1, "past the last row");
+  assert.equal(rowAtLine(-1, 3), -1);
+});
+
+test("the selected row is marked, so the keyboard path has a cursor", () => {
+  const rows = rowsFromArgs([{ agent: "explore", task: "a" }, { agent: "reviewer", task: "b" }]);
+  const plain = renderRows(rows, rows[0].startedAt);
+  const marked = renderRows(rows, rows[0].startedAt, 1);
+  assert.match(plain[1], /^ {2}·/);
+  assert.match(marked[2], /^> ·/, marked[2]);
+});
+
+test("a child's session file is found while it is still being written", async () => {
+  // The click target must exist for a running subagent, not only a finished one.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-distro-child-"));
+  const dir = childSessionDir(root, "session-1");
+  fs.mkdirSync(dir, { recursive: true });
+  assert.equal(newestSessionFile(dir), undefined, "no file yet");
+  const first = path.join(dir, "a.jsonl");
+  fs.writeFileSync(first, "{}\n");
+  assert.equal(newestSessionFile(dir), first);
+  // A second child in the same parent session: the newest wins.
+  const second = path.join(dir, "b.jsonl");
+  fs.writeFileSync(second, "{}\n");
+  const now = Date.now() / 1000;
+  fs.utimesSync(second, now + 5, now + 5);
+  assert.equal(newestSessionFile(dir), second);
+  // A directory that does not exist is not an error.
+  assert.equal(newestSessionFile(path.join(root, "missing")), undefined);
+});
+
+test("the child session directory is the one the package writes", () => {
+  assert.equal(childSessionDir("/s", "abc"), path.join("/s", "lite-subagent", "abc"));
+});
+
+test("the panel appears with a fan-out and leaves with it", () => {
+  // Auto: nothing on screen until subagents are actually working.
+  assert.equal(panelVisible("auto", false), false);
+  assert.equal(panelVisible("auto", true), true);
+});
+
+test("pinned keeps the panel between runs, off keeps it away", () => {
+  assert.equal(panelVisible("pinned", false), true);
+  assert.equal(panelVisible("pinned", true), true);
+  assert.equal(panelVisible("off", false), false);
+  assert.equal(panelVisible("off", true), false);
 });
