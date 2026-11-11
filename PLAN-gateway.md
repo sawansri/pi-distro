@@ -32,28 +32,44 @@ the local distro; `gateway` becomes the hosted one.
 
 ## What is verified, not assumed
 
-Probed live against the gateway, the same way the extension probes at runtime:
+Everything below was measured against the live gateway on 2026-11-11, not read
+from documentation.
 
 | API path | Model | Runs `web_search`? |
 |---|---|---|
 | `anthropic-messages` | Claude Opus / Sonnet / Haiku 5.5 | **yes** |
-| `openai-responses` | gpt-6-astra, gpt-6.1-sol, gpt-6-sol, gpt-6-luna | **yes** |
-| `openai-responses` | DeepSeek V4 Pro / V4.1 Flash, Gemini 3.8 Flash / 4 Argon, Grok 4.7, Kimi K3.1 Pro / K2.7 Code | **no** — accepts `tools`, ignores it |
+| `openai-responses` | gpt-6-astra, gpt-6.1-sol, gpt-6-sol, gpt-6-luna, GPT-6.1-Terra | **yes** |
+| `openai-completions` | every other chat model | **no** — that API has no server-side search tool |
 
-That last row is the reason the extension probes instead of assuming. A model
-that ignores the tool answers from memory and the answer looks normal. The
-probe is a question only answerable by searching; whether the response carries
-a `web_search_call` / `server_tool_use` block decides. Results cache in
-`<agentDir>/gateway-search.json`, and a provider error is never cached, so a
-brief gateway outage doesn't hide the tools for a week.
+An earlier version of this table listed DeepSeek, Gemini, Grok and Kimi under
+`openai-responses` as accepting `tools` but ignoring it. Re-probed on
+2026-11-11, that was measuring the wrong thing: the gateway catalogue reports
+those models as `responses: false` (`capabilities.responses` in `/v1/models`),
+and **sending one to `/v1/responses` does not fail**. The gateway accepts the
+request and answers from an unpinned default pool, then bills it at the asked
+model's rates. A 15k-token prompt billed $0.000137 on `/v1/responses` where the
+same prompt on `/v1/chat/completions` billed $0.0038 — the Responses answer was
+not that model at all, and its `model` field read `"default"`.
+
+So the capability question is not "does this model search" but "which API is
+this model served on", and the installer now records that per model from the
+catalogue (`api` on each entry). Chat Completions models genuinely cannot
+search, which is why the search model is chosen from the two APIs above.
+
+The extension still probes: a model can be on a search-capable API and still
+fail to run the tool. The probe is a question only answerable by searching, and
+whether the response carries a `web_search_call` / `server_tool_use` block
+decides. Results cache in `<agentDir>/gateway-search.json`, keyed by endpoint as
+well as model, and neither a provider error nor an auth failure is cached, so a
+brief outage or an unset key doesn't hide the tools for a week.
 
 Also confirmed on the gateway: Anthropic serves `web_fetch_20250910`
 separately from search (so `web_extract` reads pages directly), while the
 Responses path has one tool that both searches and opens pages.
 
-Consequence for the design: **search availability is per model, not per
-provider.** Kimi K3.1 Pro is a strong reviewer but cannot search, so panels
-that need search must not silently include it.
+Consequence for the design: **search availability is per model and per API.**
+A reviewer that cannot search must not be silently included in a panel that
+needs search.
 
 ## Step 1 — Gateway provider config (done for dev, needs installer)
 
@@ -220,31 +236,148 @@ Explicitly recommended *against*:
 - Fifth and sixth reviewer vendors: the multi-review pool is already 4–5
   models; more seats cost more than they add once verification exists.
 
+## Cost and cache, measured
+
+These numbers came out of the gateway's own `usage` blocks and changed the
+design, so they are recorded rather than assumed.
+
+- **`/v1/models` publishes every model's price**, per million tokens, including
+  `cache_read_input_per_million` and `cache_creation_input_per_million`. The
+  installer now reads them, so `models.json` matches the bill. The hand-written
+  template it replaced had Haiku 5.5 at 8x its real input price and Opus 5.5 at
+  ~4x, among others.
+- **Prompt caching is on by default and pays across deployments.** The same
+  15k-token prompt on `DeepSeek-V4.1-Flash` billed $0.0038 cold and $0.00014
+  warm; on `gpt-6-luna`, $0.00128 cold and $0.000108 warm. The gateway
+  load-balances across two Azure deployments (`pdue-aoai-009`, `dvue-aoai-006`)
+  and the cached prefix survives the switch.
+- **The Anthropic path reports cache writes explicitly**
+  (`cache_creation.ephemeral_5m_input_tokens`) and honours `cache_control`
+  breakpoints: a marked system block wrote 36k tokens once, then read them back
+  at 13x cheaper on the next call.
+- **A wrong `api` silently tests a different model** — see the table above. This
+  is the single most important thing the installer gets right.
+- **`x-token-usage-cost` is in every response header**, and both API paths also
+  return `total_cost` in `usage`. pi ignores both and computes cost from
+  `models.json`, which is why the generated prices matter as much as they do.
+
 ## Order of work
 
 1. ~~`web_search` / `web_extract` on the gateway~~ (done, tested, probing)
 2. ~~Provider config + installer for this branch~~ (done: `--gateway`,
-   `--anthropic`, `--concurrency`; reuses an existing gateway provider)
+   `--anthropic`, `--concurrency`; generates from the live catalogue; reuses an
+   existing provider for the same endpoint within one API family)
 3. ~~Web search via the gateway~~ (done: deep-research provider)
-4. Loadout and prompt: drop `inference-stats`, `cache-guard`, plan-mode's
-   gufo assumptions
-5. Port `multi-review` into the distro (it is still a symlink to a personal
+4. ~~Loadout: drop `inference-stats`~~ (done; it polls gufo's `/slots`)
+5. ~~Subagent model assignment; concurrency default 4~~ (done: per-role models
+   written by the installer, provider name resolved at install time)
+6. ~~`cache-guard` on the gateway's APIs~~ (done: it only understood
+   chat-completions `messages`, so it was a silent no-op on both paths here)
+7. Port `multi-review` into the distro (it is still a symlink to a personal
    repo) and retarget its reviewer search onto `providers/gateway.ts`
-6. Subagent model assignment; concurrency default (now 4)
-7. Virtual-model router with the cache-safety guards
-8. Cost reporting in footer and review results
-9. Only then: pick from the Step 8 table, one at a time, measuring each
+8. Virtual-model router with the cache-safety guards — **now questionable**;
+   see the router note below
+9. Cost reporting: largely done by the price fix plus pi's own footer; add a
+   per-review cost line when `multi-review` lands
+10. Only then: pick from the Step 8 table, one at a time, measuring each
+
+## Cheap subagent models: measured, not assumed
+
+The cheap roles default to DeepSeek V4.1 Flash. It was chosen over `gpt-6-luna`
+on **speed**, which is the constraint the token price does not describe. Measured
+against the live gateway on 2026-11-11, 3 runs each, median, ~4k-token prompt:
+
+| Model | TTFT | wall (300 out) | decode | input $/1M |
+|---|---|---|---|---|
+| DeepSeek-V4.1-Flash | 771ms | 2.18s | 213 tok/s | 0.255 |
+| gpt-6-luna | 1301ms | 4.46s | 95 tok/s | 0.068 |
+
+DeepSeek is **2.2x faster** and **3.7x more expensive**. At subagent volumes the
+price difference is cents, and the wall-clock difference is the whole experience,
+so the faster model wins. Luna remains the cheaper option if throughput ever
+becomes the binding cost.
+
+Adequacy was checked rather than assumed: both models located the plan-mode
+allowlist by `path:line` correctly, but DeepSeek quoted the exact table, named the
+`GIT_UNSAFE` lookahead and the locale-only env rule, and was **2-6x faster** doing
+it. Every line it cited was verified against the source, and it correctly flagged
+a second agent's off-by-three line reference.
+
+Because the cheap tier is cheap, the agent prompts no longer trade thoroughness
+for tokens: `explore` reads whole files when the answer needs them, and
+`researcher` runs as many queries as the question needs. The one cap kept is the
+400-word report length, which protects the *parent's* context rather than the
+wallet — the parent is an expensive model and pays for every word.
+
+## Sandboxing: what was measured, and the trap
+
+Three options were tested on this machine rather than compared from docs.
+
+| | nono (Landlock) | pi-sandbox (bwrap) | guard (ours) |
+|---|---|---|---|
+| Runs with `CapEff: 0` | **yes** (ABI 8) | **no** — `bwrap: Failed RTM_NEWADDR` | yes |
+| Blocks reading `~/.ssh` | **yes** | via bwrap | pattern only |
+| Blocks network by default | **yes** (denied the gateway until allowed) | via bwrap | no |
+| Interactive prompts | none | **prompts per blocked call** | none |
+
+`pi-sandbox` is dropped. It is built on `@carderne/sandbox-runtime`, which uses
+`bwrap` on Linux, and this environment has no effective capabilities — so it
+cannot start. Its own README also notes that glob patterns in
+`allowWrite`/`denyWrite` are **silently ignored on Linux**, so such a config
+looks protective without being it.
+
+nono is kept, via `scripts/sandbox.sh`. Two things it needs that are not
+obvious, both found by running it: `~/.gitconfig` must be granted read-only or
+every `git` command dies, and `/tmp` must be writable or jiti cannot compile
+extensions and pi fails to load them.
+
+**The trap worth recording.** The first version of the launcher granted
+`--read ~/.ssh` so that `git push` over SSH would work. That grant makes private
+keys readable to the agent — verified: without it `head -c 4 ~/.ssh/id_ed25519`
+returns `Permission denied`, with it the read succeeds. It re-opened the exact
+hole the sandbox exists to close, and the fix is to leave pushing to the human.
+`test/guard.test.ts` now fails if the launcher ever grants `~/.ssh` again.
+
+**Why the guard is still needed.** nono let `git push --force` through, correctly:
+a force-push is a local git operation plus an allowed domain, and a filesystem
+sandbox has nothing to object to. The guard blocks it. In the other direction,
+the guard saw `./build.sh` as an ordinary workspace file; nono refused the
+`cat ~/.ssh` inside it at the syscall. Each catches what the other cannot see.
+
+## The router: what the evidence says now
+
+Step 6 proposed a virtual-model router as "the single biggest token-cost lever".
+Published results suggest that is true for **per-thread** routing and mostly
+false for **per-turn** routing:
+
+- LangChain's harness router cut median cost 64% ($2.61 → $0.94) and matched
+  quality, with the model **fixed for the whole thread**.
+- Their honest negative result: with 93% of turns sent to a small model, 7% of
+  calls were 68% of the bill, and routing did not clearly beat just using the
+  cheap model (the gain was inside the error bars).
+- Switching models mid-conversation invalidates the prompt cache and breaks
+  reasoning signatures; Anthropic's own guidance is to pick model and effort at
+  session start. A classifier call is not free either: Switchyard measured its
+  judge at 21% of routed spend and ~700ms per turn.
+
+So the cheap version of this step is the one already implemented: **static
+per-role assignment** (`agentModels`), where each subagent is a fresh thread
+with its own cache and the main loop never switches. A cache-warming,
+conversation-sticky router is worth building only if a per-thread experiment
+shows the role split is not capturing most of the saving.
 
 ## Open questions
 
-- **Does the gateway's search bill per call or per token?** Not visible in the
-  responses I probed. It decides whether `max_uses: 4` is generous or wasteful,
-  and whether reviewers should search at all by default.
-- **Prompt-cache TTL on the gateway.** Anthropic showed `ephemeral_5m`; the
-  OpenAI path showed `cached_tokens` without a TTL. `promptCache` in
-  `models.json` needs a real number before `cacheWarming` can be trusted.
-- **Rate limits per model**, not per key — the probe showed 404s on a model
-  that exists (a Responses-path routing quirk), so limits and routing failures
-  need to be distinguished from "model can't search."
-- **Which model is the default?** `main` defaults to a local Qwen. Here it is a
-  cost/quality tradeoff with no obvious answer until Step 7 exists.
+- **Does the gateway's search bill per call or per token?** The Anthropic path
+  reports `server_tool_use.web_search_requests` in `usage`, so the count is
+  visible; the price is not itemised. It decides whether `max_uses: 4` is
+  generous or wasteful.
+- **Prompt-cache TTL on the gateway.** Anthropic's catalogue entry prices a 1h
+  tier (`cache_creation_1h_per_million`) and `ephemeral_1h` is accepted, but no
+  response has yet shown a 1h write, so `promptCache.long` is only declared for
+  models that price it. The OpenAI path reports `cache_write_tokens` with no
+  TTL, so only `promptCache.short` is declared there.
+- **Rate limits per model**, not per key. Neither API documents a limit in the
+  catalogue beyond a `capacity` string ("15M TPM, 15K RPM").
+- **Which model is the default?** Currently the first search-capable model of
+  the preferred provider. That is a placeholder for a real cost/quality choice.
