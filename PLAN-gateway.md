@@ -166,12 +166,13 @@ agent-directory config, so the installer seeds it like it seeds
 
 ## Step 5 — Subagents and deep research
 
-- **Subagents**: `pi-lite-subagent` works unchanged; the model comes from
-  agent frontmatter. On `main` the constraint is `PI_SUBAGENT_MAX_CONCURRENCY`
-  matching gufo's `--sessions`. Here it should default higher (concurrency is
-  a rate-limit question now) and the agents should name models: `explore` and
-  `plan` on a fast cheap model, `reviewer` on a strong one, `researcher`
-  needing a search-capable model.
+- **Subagents**: `@tintinweb/pi-subagents`, with the model from agent
+  frontmatter. `pi-lite-subagent` was the first choice and was replaced once it
+  became clear the other already ships the live widget, FleetView and
+  per-agent conversation viewer — the hand-written panel was deleted rather
+  than maintained (`git show 6531773:extensions/subagent-view.ts`). Concurrency
+  is `maxConcurrent` in `subagents.json`; two pools, background and foreground,
+  so `--concurrency` sets both.
 - **Deep research**: `pi-deep-research` chains SearXNG → Exa → Tavily → Brave
   and its own approval flow. On this branch either (a) give it a provider
   plugin that calls `gateway-search-api.ts` and drop the rest, or (b) drop it

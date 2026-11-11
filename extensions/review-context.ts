@@ -122,20 +122,35 @@ export function withReviewContext(task: string, context: string): string {
 
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", (event, ctx) => {
-    if (event.toolName !== "subagent") return;
-    const input = event.input as { tasks?: { agent?: string; task?: string }[] };
-    if (!Array.isArray(input.tasks)) return;
-    // Only the reviewer needs a diff; an explore agent asked to find something
-    // should not pay for one.
-    const reviews = input.tasks.filter((t) => /review/i.test(String(t?.agent ?? "")));
-    if (reviews.length === 0) return;
-    const context = reviewContext(ctx.sessionManager.getBranch(), ctx.cwd);
-    if (!context) return;
+    // The subagent runner dispatches one agent per call: `Agent` with
+    // `subagent_type` and `prompt`. Only a reviewer needs the diff; an explore
+    // agent asked to find something should not pay for one.
+    if (event.toolName !== "Agent" && event.toolName !== "subagent") return;
+    const input = event.input as {
+      subagent_type?: unknown;
+      prompt?: unknown;
+      /** The older array-shaped tool, if another runner is in use. */
+      tasks?: { agent?: string; task?: string }[];
+    };
+    const wantsReview = (name: unknown) => /review/i.test(String(name ?? ""));
+    const context = () => reviewContext(ctx.sessionManager.getBranch(), ctx.cwd);
+
+    if (Array.isArray(input.tasks)) {
+      if (!input.tasks.some((t) => wantsReview(t?.agent))) return;
+      const diff = context();
+      if (!diff) return;
+      for (const task of input.tasks) {
+        if (!wantsReview(task?.agent)) continue;
+        task.task = withReviewContext(String(task.task ?? ""), diff);
+      }
+      return;
+    }
+
+    if (!wantsReview(input.subagent_type) || typeof input.prompt !== "string") return;
+    const diff = context();
+    if (!diff) return;
     // Mutating input in place is how a tool_call handler patches arguments; the
     // execution that follows sees the change.
-    for (const task of input.tasks) {
-      if (!/review/i.test(String(task?.agent ?? ""))) continue;
-      task.task = withReviewContext(String(task.task ?? ""), context);
-    }
+    input.prompt = withReviewContext(input.prompt, diff);
   });
 }

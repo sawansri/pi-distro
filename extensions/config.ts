@@ -10,7 +10,10 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 export interface DistroConfig {
   /** Tools turned off at session start; a trailing `*` matches a prefix. */
   disabledTools?: string[];
-  /** How many tasks of one parallel subagent call run at once. */
+  /**
+   * No longer read: the subagent runner's `subagents.json` owns concurrency.
+   * Kept so an older install's file still parses.
+   */
   subagentConcurrency?: number;
 }
 

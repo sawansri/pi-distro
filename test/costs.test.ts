@@ -11,7 +11,7 @@ const assistant = (model: string, usage: Record<string, number>) => ({
   message: { role: "assistant", provider: "gateway", model, usage },
 });
 
-/** A subagent tool result exactly as pi-lite-subagent attaches it. */
+/** A subagent tool result in the older array shape, still accepted. */
 const subagentResult = (results: unknown[]) => ({
   type: "message",
   message: { role: "toolResult", toolName: "subagent", details: { results } },
@@ -92,4 +92,49 @@ test("an empty session says so instead of printing a bare header", () => {
 test("a malformed entry is skipped rather than throwing", () => {
   const lines = renderReport([null, { type: "message" }, { type: "message", message: { role: "assistant" } }]);
   assert.deepEqual(lines, ["No usage recorded in this session yet."]);
+});
+
+test("an Agent tool result carries its usage on the message, one agent per call", () => {
+  // The current runner puts usage on the tool result (where pi also aggregates
+  // it) and descriptive fields in details — not an array of per-task results.
+  const subs = spendBySubagent([
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: "Agent",
+        usage: { input: 900, output: 60, cacheRead: 3000, cacheWrite: 0, cost: { total: 0.0021 } },
+        details: {
+          subagentType: "explore",
+          displayName: "Explore",
+          description: "find the allowlist",
+          status: "completed",
+          toolUses: 4,
+          tokens: "4.8k",
+          modelName: "DeepSeek-V4.1-Flash",
+        },
+      },
+    },
+  ]);
+  assert.equal(subs.length, 1);
+  assert.equal(subs[0].agent, "explore");
+  assert.equal(subs[0].task, "find the allowlist");
+  assert.equal(subs[0].model, "DeepSeek-V4.1-Flash");
+  assert.equal(subs[0].cost, 0.0021);
+  assert.equal(subs[0].status, "ok");
+  assert.equal(subs[0].turns, 4);
+});
+
+test("the runner's own numeric cost is preferred over a derived one", () => {
+  const subs = spendBySubagent([
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: "Agent",
+        details: { subagentType: "explore", status: "completed", cost: 5.1e-05, tokens: "174 token", toolUses: 0 },
+      },
+    },
+  ]);
+  assert.equal(subs[0].cost, 5.1e-05);
 });

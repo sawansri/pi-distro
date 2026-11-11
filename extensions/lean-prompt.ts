@@ -14,9 +14,11 @@
  * than in the system prompt, which would change at midnight and break the
  * cache of every session spanning it (oh-my-pi does the same).
  *
- * Subagent children (pi-lite-subagent sets PI_SUBAGENT_DEPTH) get a shorter
- * prompt that is the same for every child, so parallel subagents share one
- * cached prefix. pi-lite-subagent appends the agent's own instructions after it.
+ * In a subagent child this extension stands down: the subagent runner builds
+ * the child's prompt itself (agent instructions, tool scope, worktree and
+ * memory blocks), and overriding it here would silently replace all of that
+ * with the parent's prompt. The child is detected by PI_SUBAGENT_DEPTH, which
+ * pi's own subagent runners set.
  *
  * Adapted from lemonade-pi's lean-prompt.ts.
  */
@@ -37,7 +39,10 @@ const MAIN: Line[] = [
   "- For non-trivial or ambiguous tasks, investigate first and plan before editing.",
   "- When a decision is the user's to make, ask instead of guessing.",
   ["todo", "- Track work with 3 or more steps with the todo tool; keep exactly one item in progress."],
-  ["subagent", "- Delegate broad searches and independent subtasks to subagents to keep your context small. Read-only fan-out is safe; before running several agents that can *write*, check the work is genuinely independent (different files), because concurrent writes to one tree clobber each other. Ask for `path:line` and findings, not prose, since you pay for their reports in your own context."],
+  [
+    "Agent",
+    "- Delegate broad searches and independent subtasks to subagents to keep your context small. Read-only fan-out is safe; before running several agents that can *write*, check the work is genuinely independent (different files), because concurrent writes to one tree clobber each other. Ask for `path:line` and findings, not prose, since you pay for their reports in your own context.",
+  ],
   ["web_search", "- Search the web for current information or unfamiliar APIs, read the best sources with web_extract, and cite the URLs you used. For in-depth research, load the pi-deep-research skill."],
   "- After changes, verify with tests, a build, or a typecheck. Report failures honestly, with the output.",
   "- Confirm before destructive or irreversible actions such as deleting files, force-pushing, or dropping data.",
@@ -45,11 +50,6 @@ const MAIN: Line[] = [
   "# Communication",
   "- Be concise and direct. Lead with the answer; no preamble or recap.",
   "- Reference code as path:line.",
-];
-
-const CHILD: Line[] = [
-  "You are a subagent: another agent delegated one task to you. Work autonomously with your tools; you cannot ask questions. Never guess about code you haven't read.",
-  "Your final message is all the delegating agent sees, so make it a complete, concise report. Reference code as path:line.",
 ];
 
 /** `- name: description` for each user agent. */
@@ -71,7 +71,7 @@ function agentRoster(): string {
         lines.push(`- ${frontmatter.name}: ${frontmatter.description}`);
       }
     } catch {
-      // A malformed agent file is skipped, as pi-lite-subagent does.
+      // A malformed agent file is skipped, as the subagent runner does.
     }
   }
   return lines.length > 0 ? `\n\n# Subagents\n${lines.join("\n")}` : "";
@@ -91,6 +91,9 @@ function render(lines: Line[], tools: string[]): string {
 }
 
 export default function (pi: ExtensionAPI) {
+  // A child's prompt belongs to the runner that spawned it. Setting
+  // `customPrompt` here would overwrite the agent instructions, tool scope and
+  // injected memory blocks that runner just built.
   const isChild = Boolean(process.env.PI_SUBAGENT_DEPTH);
   let prompt: string | undefined;
   let datedSession = false;
@@ -104,13 +107,14 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("before_agent_start", (event) => {
+    if (isChild) return;
     const options = event.systemPromptOptions;
     // A user-supplied --system-prompt or SYSTEM.md wins.
     if (!options.customPrompt || options.customPrompt === prompt) {
       if (prompt === undefined) {
         const tools = options.selectedTools.filter((name) => !options.hiddenTools.includes(name));
-        prompt = render(isChild ? CHILD : MAIN, tools);
-        if (!isChild && tools.includes("subagent")) prompt += agentRoster();
+        prompt = render(MAIN, tools);
+        if (tools.includes("Agent") || tools.includes("subagent")) prompt += agentRoster();
       }
       options.customPrompt = prompt;
     }

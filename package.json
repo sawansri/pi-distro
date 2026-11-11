@@ -10,7 +10,6 @@
   "pi": {
     "extensions": [
       "./extensions/tool-loadout.ts",
-      "./extensions/subagents.ts",
       "./extensions/lean-prompt.ts",
       "./extensions/cache-guard.ts",
       "./extensions/plan-mode.ts",
@@ -20,7 +19,6 @@
       "./extensions/notify.ts",
       "./extensions/models-refresh.ts",
       "./extensions/costs.ts",
-      "./extensions/subagent-view.ts",
       "./extensions/review-context.ts",
       "./extensions/working-timer.ts"
     ]

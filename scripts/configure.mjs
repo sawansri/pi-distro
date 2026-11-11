@@ -120,7 +120,7 @@ function providerFor(providers, id) {
  *   re-running the installer never undoes a deliberate choice.
  * - Every existing `model:`/`thinking:` line is removed, whatever its spacing
  *   or value. Leaving an empty `model:` behind while appending a second one
- *   makes the frontmatter unparseable, and pi-lite-subagent then drops the
+ *   makes the frontmatter unparseable, and the subagent runner then drops the
  *   agent entirely instead of reporting a bad file.
  *
  * The provider name is resolved here rather than written into the .md files:
@@ -183,9 +183,30 @@ function configureDistro() {
   if (!current) return;
   const defaults = readJson(config("pi-distro.json")).value;
   const next = { ...defaults, ...current };
-  if (concurrency !== undefined) next.subagentConcurrency = concurrency;
+  // The subagent runner owns concurrency now (`subagents.json` maxConcurrent);
+  // this key is no longer read by anything, so do not write it.
+  delete next.subagentConcurrency;
   writeJson(file, next);
-  console.log(`  wrote ${file}: ${next.subagentConcurrency} parallel subagents`);
+  console.log(`  wrote ${file}`);
+  configureSubagentConcurrency();
+}
+
+/**
+ * `--concurrency` for the subagent runner.
+ *
+ * `maxConcurrent` bounds background agents; `maxConcurrentForeground` bounds the
+ * ones a turn blocks on. They are separate pools by design, and a plain
+ * `Agent` call blocks unless it asks for the background, so both are set to the
+ * same number: a fan-out that mixes the two should not get twice the cap.
+ */
+function configureSubagentConcurrency() {
+  if (concurrency === undefined) return;
+  const file = target("subagents.json");
+  const current = mergeTarget(file);
+  if (!current) return;
+  const next = { ...current, maxConcurrent: concurrency, maxConcurrentForeground: concurrency };
+  writeJson(file, next);
+  console.log(`  wrote ${file}: ${concurrency} concurrent subagents`);
 }
 
 /** pi binds shift+tab to the thinking cycle; plan mode takes shift+tab, so thinking moves to alt+t. */
@@ -217,8 +238,23 @@ async function configureModels() {
   // stale price is wrong money in the footer, not a cosmetic detail.
   const gatewayUrl = (overrides.gateway ?? template.gateway?.baseUrl ?? "").replace(/\/+$/, "");
   const probeProvider = template["gateway-anthropic"] ?? template.gateway ?? {};
-  const { entries: catalog, error } = await fetchCatalog(gatewayUrl, probeProvider);
+  const { entries: catalog, error, header } = await fetchCatalog(gatewayUrl, probeProvider);
   const providers = catalog ? catalogProviders(catalog, template, overrides) : template;
+  // The gateway told the probe which auth header it wanted. That has to be
+  // written into the provider, because pi makes its own requests and only sends
+  // what models.json declares: learning it for the probe alone leaves pi with a
+  // 401 on every call.
+  if (header) {
+    // Reinstalling keeps the providers that already exist, so patch those in
+    // place as well as the ones built from the catalogue.
+    for (const [name, spec] of Object.entries(providers)) {
+      spec.headers = { ...(spec.headers ?? {}), [header]: "$LLM_GATEWAY_KEY" };
+      if (current.providers[name]) {
+        current.providers[name].headers = { ...(current.providers[name].headers ?? {}), [header]: "$LLM_GATEWAY_KEY" };
+      }
+    }
+    console.log(`  gateway wants the ${header} header; wrote it into the providers`);
+  }
   if (catalog) {
     const count = Object.values(providers).reduce((total, spec) => total + spec.models.length, 0);
     console.log(`  gateway catalogue: ${count} models with the gateway's own prices`);

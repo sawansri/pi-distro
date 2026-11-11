@@ -8,7 +8,7 @@
  *
  * Almost none of this is computed here. Subagent results already carry per-task
  * `input`, `output`, `cacheRead`, `cacheWrite`, `cost`, `contextTokens` and
- * `turns` (`pi-lite-subagent`'s details schema); assistant messages carry usage
+ * `turns` (the subagent runner's details); assistant messages carry usage
  * and cost; the session branch carries both. So the command reads session state
  * and adds it up, which is why it needs no bookkeeping of its own and works on
  * an old session as well as a live one.
@@ -30,7 +30,7 @@ export interface Spend {
   calls: number;
 }
 
-/** A subagent task, as `pi-lite-subagent` already records it. */
+/** A subagent task, as the subagent runner records it. */
 export interface SubagentSpend extends Spend {
   agent: string;
   task: string;
@@ -91,20 +91,51 @@ export function spendBySubagent(entries: readonly any[]): SubagentSpend[] {
   const out: SubagentSpend[] = [];
   for (const entry of entries) {
     if (entry?.type !== "message" || entry.message?.role !== "toolResult") continue;
-    const details = entry.message.details;
-    if (!details || !Array.isArray(details.results)) continue;
-    for (const result of details.results) {
-      const usage = result?.usage;
+    const message = entry.message;
+    const details = message.details ?? {};
+
+    // An array of per-task results: the older array-shaped runner.
+    if (Array.isArray(details.results)) {
+      for (const result of details.results) {
+        const usage = result?.usage;
+        const spend = emptySpend();
+        add(spend, usage);
+        out.push({
+          ...spend,
+          agent: String(result?.agent ?? "?"),
+          task: String(result?.task ?? ""),
+          model: result?.model,
+          turns: typeof usage?.turns === "number" ? usage.turns : undefined,
+          contextTokens: typeof usage?.contextTokens === "number" ? usage.contextTokens : undefined,
+          status: result?.exitCode === undefined ? "running" : result.exitCode === 0 ? "ok" : "failed",
+        });
+      }
+      continue;
+    }
+
+    // One agent per call: usage rides on the tool result itself, where pi also
+    // aggregates it into the session totals. The details carry the descriptive
+    // fields and a formatted token string, not numeric usage.
+    if (typeof details.subagentType === "string" || typeof details.displayName === "string") {
       const spend = emptySpend();
-      add(spend, usage);
+      add(spend, message.usage);
+      // The runner reports its own numeric cost, which is the figure it priced;
+      // prefer it over anything derived here. `tokens` is a display string
+      // ("4.8k"), so it is not parsed back into a number.
+      if (typeof details.cost === "number" && Number.isFinite(details.cost)) {
+        spend.cost = details.cost;
+        if (spend.calls === 0) spend.calls = 1;
+      }
+      const status = String(details.status ?? "");
       out.push({
         ...spend,
-        agent: String(result?.agent ?? "?"),
-        task: String(result?.task ?? ""),
-        model: result?.model,
-        turns: typeof usage?.turns === "number" ? usage.turns : undefined,
-        contextTokens: typeof usage?.contextTokens === "number" ? usage.contextTokens : undefined,
-        status: result?.exitCode === undefined ? "running" : result.exitCode === 0 ? "ok" : "failed",
+        agent: String(details.subagentType ?? details.displayName ?? "?"),
+        task: String(details.description ?? ""),
+        model: typeof details.modelName === "string" ? details.modelName : undefined,
+        turns: typeof details.toolUses === "number" ? details.toolUses : undefined,
+        // `tokens` is formatted for display ("4.8k"); keep it out of the numeric
+        // column rather than parsing a human string back into a number.
+        status: status === "completed" ? "ok" : status === "running" || status === "queued" ? "running" : "failed",
       });
     }
   }

@@ -1,6 +1,5 @@
 {
   "disabledTools": [
     "lsp_*"
-  ],
-  "subagentConcurrency": 4
+  ]
 }

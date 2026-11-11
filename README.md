@@ -116,7 +116,7 @@ rewrites its own lines on the next run and leaves lines you typed alone.
 | Deep research with sources | [pi-deep-research](https://github.com/czhiming-maker/pi-deep-research), with `providers/gateway.ts` | `/research [quick\|standard\|deep] <topic>`, or ask |
 | Web search and page reading | pi-deep-research's `web_search` and `web_extract`, through the gateway's own search tool | automatic; no SearXNG or API key of its own |
 | Plan mode, no extra tools | `extensions/plan-mode.ts` | `shift+tab`, `/plan` |
-| Subagents | [pi-lite-subagent](https://www.npmjs.com/package/pi-lite-subagent), `agents/` | explore, plan, reviewer, researcher, general-purpose |
+| Subagents | [@tintinweb/pi-subagents](https://github.com/tintinweb/pi-subagents), `agents/` | `Agent` tool: explore, plan, reviewer, researcher, general-purpose; live widget + FleetView |
 | Todo list | [pi-todo-lite](https://www.npmjs.com/package/pi-todo-lite) | `ctrl+alt+t`, `/todos` |
 | Diagnostics after edits | [@ian-pascoe/pi-lsp](https://www.npmjs.com/package/@ian-pascoe/pi-lsp) | automatic; its tools are off |
 | Undo file changes | [pi-workspace-history](https://www.npmjs.com/package/pi-workspace-history) | `/undo`, `/redo`, `/diff` |
@@ -125,7 +125,6 @@ rewrites its own lines on the next run and leaves lines you typed alone.
 | Cache hit rate and miss warnings | `extensions/cache-guard.ts` | footer; warns with the cause |
 | Refresh the model list | `extensions/models-refresh.ts` | `/models-refresh [--prune]` |
 | Spend by model and subagent | `extensions/costs.ts` | `/costs` |
-| Live subagent panel | `extensions/subagent-view.ts` | appears during a fan-out; `/subagents` pins it, `/subagents open <n>` inspects one |
 | Destructive-command guard | `extensions/guard.ts` | always on; `PI_DISTRO_GUARD=off` to disable |
 | Reviewer gets the diff | `extensions/review-context.ts` | automatic when a reviewer is dispatched |
 | Notes across sessions | `extensions/remember.ts` | `/remember <note>`, `-g` for all projects |
@@ -138,7 +137,8 @@ A request carries about 2.8k tokens of prompt and tool declarations.
 ## Configuration
 
 - `pi-distro.json` in the agent directory: `disabledTools` (default `["lsp_*"]`),
-  `subagentConcurrency`, `gatewaySearch.model`, and `agentModels`.
+  `gatewaySearch.model`, and `agentModels`. Concurrency lives in the subagent
+  runner's own `subagents.json` (`maxConcurrent`), which `--concurrency` writes.
 - `PI_DISTRO_CACHE_WARN_TOKENS` (default 1024): reprocessed tokens that trigger a
   cache warning. `PI_DISTRO_CACHE_LOG=<file>` logs every request's cache use,
   also from subagents and print mode.

@@ -187,11 +187,15 @@ export async function fetchCatalog(baseUrl, provider, env = process.env, timeout
   if (!key && !Object.keys(headers).some((h) => /authorization|api-key/i.test(h))) {
     return { error: "no API key configured for the gateway" };
   }
-  const read = async (response) => {
+  const read = async (response, discovered) => {
     if (!response.ok) return { error: `gateway answered ${response.status} to /models` };
     const body = await response.json();
     const entries = Array.isArray(body?.data) ? body.data : undefined;
-    return entries && entries.length > 0 ? { entries } : { error: "the gateway published no models" };
+    if (!entries || entries.length === 0) return { error: "the gateway published no models" };
+    // `header` is the one the gateway asked for, so the caller can write it into
+    // models.json: the probe succeeding is not enough, because pi makes its own
+    // requests with the provider's configured headers.
+    return discovered ? { entries, header: discovered } : { entries };
   };
   try {
     const first = await fetch(`${baseUrl}/models`, { headers, signal: AbortSignal.timeout(timeoutMs) });
@@ -205,7 +209,7 @@ export async function fetchCatalog(baseUrl, provider, env = process.env, timeout
       headers: { ...headers, [wanted]: key },
       signal: AbortSignal.timeout(timeoutMs),
     });
-    return read(retry);
+    return read(retry, wanted);
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }

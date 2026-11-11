@@ -170,7 +170,7 @@ test("an agent's own model: line survives a reinstall, and empty keys are replac
   await configure(d, "--gateway", "https://gw.example.dev/v1");
   assert.match(fs.readFileSync(reviewer, "utf8"), /^model: gateway-anthropic\/Claude-Opus-5-5$/m);
   // An empty `model:` left in place beside a generated one makes the
-  // frontmatter unparseable, and pi-lite-subagent then drops the agent.
+  // frontmatter unparseable, and the subagent runner then drops the agent.
   const planText = fs.readFileSync(plan, "utf8");
   assert.equal(planText.match(/^model:/gm)?.length, 1, planText);
   assert.equal(planText.match(/^thinking:/gm)?.length, 1, planText);
