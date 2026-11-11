@@ -88,6 +88,24 @@ done
 pi_args=$*
 [ -n "$saw_ddash" ] || true
 
+# Every hostname in models.json that pi may need to reach, as
+# `--allow-domain <host>` pairs.
+#
+# Read with sed rather than a JSON parser: the only interpreter guaranteed to be
+# present is /bin/sh. The pattern takes everything between "://" and the next
+# "/" or end of value, which is the host (with a port, when one is given).
+list_gateway_hosts() {
+  [ -f "$agent_dir/models.json" ] || return 0
+  sed -n 's/.*"baseUrl"[[:space:]]*:[[:space:]]*"[^:]*:\/\/\([^/]*\)\/.*/\1/p' "$agent_dir/models.json" |
+    grep -v '^$' |
+    grep -v 'example\.' |
+    sed 's/:.*//' |
+    sort -u |
+    while IFS= read -r host; do
+      printf -- '--allow-domain %s\n' "$host"
+    done
+}
+
 if ! command -v nono >/dev/null 2>&1; then
   echo "nono is not installed. Install it from https://nono.sh, or run pi directly." >&2
   exit 1
@@ -152,10 +170,19 @@ done
 [ -n "$domains" ] && set -- "$@" $domains
 
 # The model gateway is the one host pi cannot work without, so it is allowed by
-# naming it rather than by turning the network off. Quoted, so a domain with a
-# slash in it cannot become a flag.
-# shellcheck disable=SC2086
-[ -n "$domains" ] || set -- "$@" --allow-domain llm-api.amd.com
+# naming it rather than by turning the network off. The host comes from
+# models.json, which is the only place the gateway is configured: a launcher that
+# named one here would allow the wrong host for everyone else, and block their
+# real gateway.
+if [ -z "$domains" ] && [ -z "$block_net" ]; then
+  domains=$(list_gateway_hosts)
+  if [ -z "$domains" ]; then
+    echo "warning: no gateway host found in $agent_dir/models.json;" \
+         "pi will not reach its provider. Pass --allow-domain <host>." >&2
+  fi
+  # shellcheck disable=SC2086
+  set -- "$@" $domains
+fi
 
 [ -n "$block_net" ] && set -- "$@" --block-net
 

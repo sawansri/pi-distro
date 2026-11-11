@@ -61,11 +61,20 @@ nothing when nothing changed, and leaves the file untouched when the fetch
 fails. pi reads `models.json` at startup and `/reload` does not cover it, so
 restart afterwards.
 
-The key format is not baked into the code. `config/models.template.json`
-carries this gateway's credentials as ordinary `models.json` fields (`apiKey`
-plus any `headers`), so a gateway that wants a bearer token instead of an
-`Ocp-Apim-Subscription-Key` header is a one-file edit, and the catalogue probe
-reuses whatever headers you configure.
+### If your gateway wants its own auth header
+
+The template sends a bearer token, which most gateways accept. Azure API
+Management and some enterprise proxies want a subscription-key header instead.
+Add it to the provider's `headers` and the catalogue probe uses it too:
+
+```json
+"headers": { "Ocp-Apim-Subscription-Key": "$LLM_GATEWAY_KEY" }
+```
+
+Without it, such a gateway answers `401` to the catalogue request; the install
+still completes, but from the template's fallback model list rather than the
+gateway's own prices. `/models-refresh` reports the same error, so you can add
+the header and re-run it once `/models-refresh` finds the catalogue.
 
 ## What the installer works out for you
 

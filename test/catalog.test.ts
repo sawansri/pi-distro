@@ -3,10 +3,11 @@
 //   node --test test/catalog.test.ts
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, test } from "node:test";
-import { catalogModel, catalogProviders, fetchCatalog, isPlaceholder, mergeModels, servedApi } from "../extensions/catalog.ts";
+import { authHeaders, catalogModel, catalogProviders, fetchCatalog, isPlaceholder, mergeModels, servedApi } from "../extensions/catalog.ts";
 
 const servers: http.Server[] = [];
 after(() => servers.forEach((server) => server.close()));
@@ -115,4 +116,23 @@ test("a refresh replaces listed models and keeps the ones the catalogue omits", 
 test("--prune drops entries the catalogue no longer lists", () => {
   const merged = mergeModels([{ id: "mine" }], [{ id: "listed" }], true);
   assert.deepEqual(merged.map((model) => model.id), ["listed"]);
+});
+
+test("the template is vendor-neutral: no subscription-key header by default", () => {
+  // The header belongs to one vendor; the template ships a bearer token, which
+  // most gateways accept. The README shows how to add a subscription-key header
+  // back for a gateway that wants one.
+  const template = JSON.parse(readFileSync(new URL("../config/models.template.json", import.meta.url), "utf8"));
+  for (const [name, provider] of Object.entries(template.providers)) {
+    const headers = Object.keys((provider as any).headers ?? {}).join(" ").toLowerCase();
+    assert.doesNotMatch(headers, /ocp-apim|subscription-key/, `${name} carries a vendor header`);
+  }
+});
+
+test("a configured subscription-key header is sent, and authHeaders honours it", () => {
+  const headers = authHeaders({ apiKey: "$K", headers: { "Ocp-Apim-Subscription-Key": "$K" } }, { K: "secret" } as any);
+  assert.equal(headers["Ocp-Apim-Subscription-Key"], "secret");
+  // A bearer token is sent alongside; a gateway that wants only its own header
+  // ignores it, and one that wants a bearer token gets it without extra config.
+  assert.equal(headers.authorization, "Bearer secret");
 });

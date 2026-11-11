@@ -249,8 +249,8 @@ design, so they are recorded rather than assumed.
 - **Prompt caching is on by default and pays across deployments.** The same
   15k-token prompt on `DeepSeek-V4.1-Flash` billed $0.0038 cold and $0.00014
   warm; on `gpt-6-luna`, $0.00128 cold and $0.000108 warm. The gateway
-  load-balances across two Azure deployments (`pdue-aoai-009`, `dvue-aoai-006`)
-  and the cached prefix survives the switch.
+  load-balances across two Azure deployments behind the gateway, and the
+  cached prefix survives the switch between them.
 - **The Anthropic path reports cache writes explicitly**
   (`cache_creation.ephemeral_5m_input_tokens`) and honours `cache_control`
   breakpoints: a marked system block wrote 36k tokens once, then read them back

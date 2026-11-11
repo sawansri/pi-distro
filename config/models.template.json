@@ -8,7 +8,6 @@
       "apiKey": "$LLM_GATEWAY_KEY",
       "authHeader": true,
       "headers": {
-        "Ocp-Apim-Subscription-Key": "$LLM_GATEWAY_KEY",
         "anthropic-version": "2023-06-01"
       },
       "models": [
@@ -82,9 +81,7 @@
       "api": "openai-responses",
       "apiKey": "$LLM_GATEWAY_KEY",
       "authHeader": true,
-      "headers": {
-        "Ocp-Apim-Subscription-Key": "$LLM_GATEWAY_KEY"
-      },
+      "headers": {},
       "models": [
         {
           "id": "gpt-6.1-sol",
